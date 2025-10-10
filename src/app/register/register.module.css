@@ -1,0 +1,365 @@
+
+
+.wrapper {
+  display: flex;
+  justify-content: center;
+  flex-direction: row;
+  align-items: center;
+  height: 100vh;
+/*  background: linear-gradient(45deg, #d2ddeff0, #dbf1ee); /* Gradient Background */
+  background: url('/build-bg.jpg') no-repeat center center/cover;  
+  overflow: hidden;
+}
+
+/* Form Container Box */
+.formContainer {
+  display: flex;
+  width: 500px;
+  height: 680px;
+  position: relative;
+  border-radius: 15px;
+  box-shadow: 0 12px 25px rgba(0, 0, 0, 0.1); /* Subtle Shadow for Depth */
+  /*background-color: #fff; */
+  overflow: hidden;
+  transition: transform 0.6s ease-in-out;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.1); /* Stronger Shadow */
+}
+
+/* Inner Form Box */
+.form {
+  width: 100%;
+  padding: 30px;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(12px);
+  border-radius: 10px;
+  position: absolute;
+  top: 0;
+  left: 100%; /* Start off-screen for sliding effect */
+  transition: all 0.5s ease-in-out;
+  opacity: 0;
+  visibility: hidden;
+  font-family: 'Inter', 'ui-sans-serif', 'system-ui';
+  height: 670px;
+  
+}
+
+/* Form Title */
+.formTitle {
+  font-size: 1.8rem;
+  text-align: center;
+  color: #333;
+  font-weight: 600;
+  margin-bottom: 35px;
+  text-transform: uppercase;
+  
+}
+
+/* Input Fields */
+.input {
+  width: 100%;
+  padding: 14px;
+  margin: 12px 0;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  font-size: 1rem;
+  background: #f7f7f7;
+  box-sizing: border-box;
+  transition: all 0.3s ease;
+}
+.passwordInput{
+  flex: 1;
+  border: none;
+  outline: none;
+  margin: 2px 0;
+  padding: 0.5rem;
+  font-size: 1rem;
+  background: #f7f7f7;
+  box-sizing: border-box;
+  transition: all 0.3s ease;
+}
+
+.inputGroup{
+   display: flex;
+  align-items: center;
+  border: 2px solid #d1d5db; /* gray-300 */
+  border-radius: 0.375rem; /* rounded-md */
+  padding: 0.25rem 0.25rem .5rem;
+  max-width: 500px;
+  background-color: white;
+  margin: 12px 0;
+}
+
+/* Input Focus Effect */
+.input:focus {
+  border-color: #6c63ff;
+  outline: none;
+  box-shadow: 0 0 8px rgba(108, 99, 255, 0.5); /* Soft glow on focus */
+}
+
+/* Buttons */
+.button {
+  width: 100%;
+  padding: 15px;
+  background-color: #3f3a94;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: background-color 0.3s ease, transform 0.2s ease;
+  box-sizing: border-box;
+}
+
+ .iconButton {
+    background: 'none';
+    border: 'none';
+    cursor: 'pointer';
+    padding: '0.25rem';
+    display: 'flex';
+    padding: 0.5rem;                  /* p-2 */
+    background-color: transparent;
+    transition: background-color 0.2s ease;
+    
+  }
+/* Button Hover */
+.button:hover {
+  background-color: #5752d1;
+  transform: scale(1.05); /* Slight scale on hover */
+}
+.socialicon {
+  padding: 0.75rem;
+  border-radius: 9999px;
+  background-color: white;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s ease-in-out;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.socialicon:hover {
+  transform: scale(1.05);
+  position: relative;
+  display: inline-block;
+  opacity: 1;
+}
+/* Toggle Text for Switching Forms */
+.toggleText {
+  text-align: center;
+  color: #09081c;
+  cursor: pointer;
+  font-size: 0.95rem;
+  margin-top: 20px;
+  text-decoration: underline;
+  font-weight: 500;
+}
+
+/* Hover Effect for Toggle Text */
+.toggleText:hover {
+  color: #0f0d36;
+}
+
+/* Style when form is in registration state */
+.register {
+  left: 0; /* Bring registration form to the screen */
+  opacity: 1;
+  visibility: visible;
+  z-index: 2;
+}
+
+/* Style when form is in login state */
+.login {
+  left: -100%; /* Move login form to the left */
+  opacity: 1;
+  visibility: visible;
+  z-index: 1;
+}
+.msg{
+  text-align: center;
+  margin-top: -20PX;
+  font-size: 14px;
+}
+.termsText {
+  font-size: 0.85rem;
+  color: #13171d;;
+  text-align: center;
+  margin-top: 1rem;
+}
+.coverImage{
+  width:85%;
+  height: 90%;
+  
+}
+
+.link {
+  color: #0a294b;
+  text-decoration: underline;
+  cursor: pointer;
+}
+/* Transition for Smooth Swipe Effect */
+.formContainer .register {
+  transform: translateX(0);
+}
+
+.formContainer .login {
+  transform: translateX(-100%);
+}
+ /* For Password strength check */ 
+ .strength {
+  font-size: 0.85rem;
+  margin-top: 6px;
+  font-weight: 500;
+}
+
+.weak {
+  color: red;
+}
+
+.medium {
+  color: orange;
+}
+
+.strong {
+  color: green;
+}
+
+.alertBox {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #f44336;
+  color: white;
+  padding: 12px 20px;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  z-index: 1000;
+  font-size: 0.95rem;
+  animation: fadeInOut 4s ease-in-out;
+}
+
+@keyframes fadeInOut {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
+  }
+  10%,
+  90% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
+  }
+}
+
+.divider {
+  text-align: center;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.socialButtons {
+  
+   display:flex;
+    flex-direction: row;
+    width: 100%;
+    gap: 2.5rem;
+  
+}
+
+.imageSection {
+  position: relative;
+  width: 100%;
+  height: 256px; /* h-64 */
+
+  /* Medium and up */
+  @media (min-width: 768px) {
+    width: 50%;
+    height: 650px;
+  }
+}
+@media (max-width: 900px) {
+  .wrapper {
+    flex-direction: column;
+  }
+  .imageSection .formContainer{
+    flex: 1;
+  }
+  .form {
+    width: 80%;
+    margin-left: 50px;
+  }
+  .register{
+    left: 0;
+  }
+  .login{
+    left: -100;
+  }
+}
+
+
+@media (max-width: 600px) {
+  .wrapper {
+    flex-direction: column;
+  }
+  .imageSection .formContainer{
+    flex: 1;
+  }
+
+  
+
+  .input, .passwordInput {
+    font-size: 1rem;
+    padding: 12px;
+  }
+
+  .formTitle {
+    font-size: 1.5rem;
+    margin-bottom: 15px;
+  }
+
+  .button {
+    font-size: 1rem;
+    padding: 12px;
+  }
+
+  .toggleText {
+    font-size: 0.85rem;
+  }
+
+  .inputGroup {
+    flex-direction: row;
+    padding: 0.4rem;
+  }
+
+  .socialButtons {
+    display:flex;
+    flex-direction: column;
+    width: 100%;
+    gap: 2.5rem;
+  }
+
+  .googleButton,
+  .githubButton {
+    width: 100%;
+    font-size: 0.95rem;
+  }
+
+  .alertBox {
+    font-size: 0.85rem;
+    padding: 10px 16px;
+  }
+  .register{
+    left: 0;
+  }
+  .login{
+    left: -100;
+  }
+}
