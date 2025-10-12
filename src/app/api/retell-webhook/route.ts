@@ -61,14 +61,21 @@ async function createZohoLead(retellData: any) {
   }
 }
 
-// Route Handler for App Router
-export async function POST(req: Request) {
+// GET handler — for testing in browser
+export async function GET() {
+  return new Response("Retell webhook endpoint is running. Send POST requests to trigger Zoho.", {
+    status: 200,
+    headers: { "Content-Type": "text/plain" },
+  });
+}
+
+// POST handler — Retell webhook
+export async function POST(req: NextRequest) {
   try {
-    // Parse JSON body safely
     const body = await req.json();
     console.log("📩 Retell webhook received:", body);
 
-    // Retell payload may or may not have `event` key
+    // Retell payload may or may not have `data` key
     const { data } = body as any;
     const payload = data || body;
 
