@@ -1,9 +1,10 @@
 // app/api/retell-webhook/route.ts
+import { NextRequest } from "next/server";
 
 let accessTokenCache = process.env.ZOHO_ACCESS_TOKEN;
 
 // Refresh Zoho Access Token if expired
-async function refreshZohoToken() {
+async function refreshZohoToken(): Promise<string | null> {
   const response = await fetch("https://accounts.zoho.com/oauth/v2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -60,17 +61,17 @@ async function createZohoLead(retellData: any) {
   }
 }
 
-// Handle POST webhook requests from Retell
-export async function POST(request: Request) {
+// Route Handler for App Router
+export async function POST(req: Request) {
   try {
-    const body = await request.json();
+    // Parse JSON body safely
+    const body = await req.json();
     console.log("📩 Retell webhook received:", body);
 
-    // Some Retell accounts send directly without event key
-    const { event, data } = body || {};
+    // Retell payload may or may not have `event` key
+    const { data } = body as any;
     const payload = data || body;
 
-    // Create a lead in Zoho CRM for each webhook call
     await createZohoLead(payload);
 
     return new Response(JSON.stringify({ success: true }), {
