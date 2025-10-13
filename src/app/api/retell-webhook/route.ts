@@ -96,7 +96,7 @@ async function createDeal(token: string, dealData: any) {
 }
 
 // 5️⃣ Webhook Handler
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
     const body = await req.json();
     console.log("📩 Retell webhook received:", JSON.stringify(body, null, 2));
@@ -107,22 +107,47 @@ export async function POST(req: NextRequest) {
     const transcript = payload.call?.transcript || "";
     const dynamic = payload.call?.collected_dynamic_variables || {};
 
+    // Extract name (fallback to "Unknown")
     const nameMatch =
-      transcript.match(/My name is (\w+)/i) ||
-      transcript.match(/This is (\w+)/i) ||
-      transcript.match(/I am (\w+)/i);
-    const name = nameMatch ? nameMatch[1] : "Customer";
+      transcript.match(/My name is ([A-Za-z ]+)/i) ||
+      transcript.match(/This is ([A-Za-z ]+)/i) ||
+      transcript.match(/I am ([A-Za-z ]+)/i);
+    const name = nameMatch ? nameMatch[1].trim() : "Unknown";
 
-    const companyName = dynamic.company || transcript.match(/from (.*?)(?:\.|$)/i)?.[1] || "";
+    // Extract email (from dynamic variables)
+    const email = dynamic.email?.trim() || "";
 
-    const contactId = await createOrUpdateContact(token, {
-      Last_Name: name,
-      Email: dynamic.email || "",
-      Phone: dynamic.phone || "",
-    });
+    // Extract phone (from dynamic variables)
+    const phone = dynamic.phone?.trim() || "";
 
-    const companyId = await createOrUpdateCompany(token, companyName);
+    // Extract company (from dynamic variables or transcript)
+    const companyName =
+      dynamic.company?.trim() ||
+      transcript.match(/from ([A-Za-z0-9 &]+)/i)?.[1] ||
+      "";
 
+    // Create or update contact only if email or phone exists
+    let contactId: string | null = null;
+    if (email || phone) {
+      contactId = await createOrUpdateContact(token, {
+        Last_Name: name,
+        Email: email,
+        Phone: phone,
+      });
+    }
+
+    // Create or update company if a name exists
+    const companyId = companyName ? await createOrUpdateCompany(token, companyName) : null;
+
+    if (!contactId) {
+      console.warn("⚠️ No contact info provided, skipping deal creation");
+      return new Response(JSON.stringify({ success: false, message: "No contact info" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Create deal
     const dealData = {
       Deal_Name: `Conversation with ${name}`,
       Stage: "New",
@@ -134,9 +159,16 @@ export async function POST(req: NextRequest) {
 
     const dealResult = await createDeal(token, dealData);
 
-    return NextResponse.json({ success: true, deal: dealResult });
+    return new Response(JSON.stringify({ success: true, deal: dealResult }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   } catch (err: any) {
     console.error("❌ Error in Retell webhook:", err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 }
+
