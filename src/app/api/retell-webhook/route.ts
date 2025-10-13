@@ -1,15 +1,15 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-// Simple in-memory cache for access token
+// In-memory token cache
 let cachedToken: string | null = null;
 let tokenExpiry: number | null = null;
 
-// 1️⃣ Get Zoho Bigin Access Token
+// 1️⃣ Get Zoho Bigin Token (with refresh)
 async function getZohoToken(): Promise<string> {
   const now = Date.now();
 
   if (cachedToken && tokenExpiry && now < tokenExpiry) {
-    return cachedToken;
+    return cachedToken; // cachedToken is definitely not null here
   }
 
   const res = await fetch("https://accounts.zoho.com/oauth/v2/token", {
@@ -31,42 +31,35 @@ async function getZohoToken(): Promise<string> {
   }
 
   cachedToken = data.access_token;
-  tokenExpiry = now + (data.expires_in - 60) * 1000; // buffer 1 min
-  return data.access_token;
+  tokenExpiry = now + (data.expires_in - 60) * 1000;
+
+  return data.access_token; // cachedToken is now guaranteed to be string
 }
+
 
 // 2️⃣ Create or Update Contact
 async function createOrUpdateContact(token: string, contactData: any) {
+  if (!contactData.Email) {
+    console.warn("⚠ Email missing, cannot search contact");
+    return null;
+  }
+
   const searchRes = await fetch(
     `https://www.zohoapis.com/bigin/v2/Contacts/search?email=${contactData.Email}`,
     { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
   );
-
   const searchData = await searchRes.json();
 
-  if (searchData.data && searchData.data.length > 0) {
-    console.log("🔄 Contact already exists:", searchData.data[0].id);
-    return searchData.data[0].id;
-  }
+  if (searchData.data && searchData.data.length > 0) return searchData.data[0].id;
 
-  const res = await fetch("https://www.zohoapis.com/bigin/v2/Contacts", {
+  const createRes = await fetch("https://www.zohoapis.com/bigin/v2/Contacts", {
     method: "POST",
-    headers: {
-      Authorization: `Zoho-oauthtoken ${token}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Zoho-oauthtoken ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ data: [contactData] }),
   });
 
-  const result = await res.json();
-
-  if (!result.data || result.data.length === 0) {
-    console.error("❌ Failed to create contact:", result);
-    return null;
-  }
-
-  console.log("✅ Contact created:", result);
-  return result.data[0].details.id;
+  const result = await createRes.json();
+  return result.data?.[0]?.details?.id || null;
 }
 
 // 3️⃣ Create or Update Company
@@ -77,52 +70,33 @@ async function createOrUpdateCompany(token: string, companyName: string) {
     `https://www.zohoapis.com/bigin/v2/Accounts/search?criteria=(Account_Name:equals:${companyName})`,
     { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
   );
-
   const searchData = await searchRes.json();
 
-  if (searchData.data && searchData.data.length > 0) {
-    console.log("🔄 Company exists:", searchData.data[0].id);
-    return searchData.data[0].id;
-  }
+  if (searchData.data && searchData.data.length > 0) return searchData.data[0].id;
 
-  const res = await fetch("https://www.zohoapis.com/bigin/v2/Accounts", {
+  const createRes = await fetch("https://www.zohoapis.com/bigin/v2/Accounts", {
     method: "POST",
-    headers: {
-      Authorization: `Zoho-oauthtoken ${token}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Zoho-oauthtoken ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ data: [{ Account_Name: companyName }] }),
   });
 
-  const result = await res.json();
-
-  if (!result.data || result.data.length === 0) {
-    console.error("❌ Failed to create company:", result);
-    return null;
-  }
-
-  console.log("✅ Company created:", result);
-  return result.data[0].details.id;
+  const result = await createRes.json();
+  return result.data?.[0]?.details?.id || null;
 }
 
 // 4️⃣ Create Deal
 async function createDeal(token: string, dealData: any) {
   const res = await fetch("https://www.zohoapis.com/bigin/v2/Deals", {
     method: "POST",
-    headers: {
-      Authorization: `Zoho-oauthtoken ${token}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Zoho-oauthtoken ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ data: [dealData], trigger: ["workflow"] }),
   });
-
   const result = await res.json();
-  console.log("✅ Deal created:", result);
   return result;
 }
 
-// 5️⃣ Webhook handler
-export async function POST(req: Request) {
+// 5️⃣ Webhook Handler
+export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     console.log("📩 Retell webhook received:", JSON.stringify(body, null, 2));
@@ -137,10 +111,9 @@ export async function POST(req: Request) {
       transcript.match(/My name is (\w+)/i) ||
       transcript.match(/This is (\w+)/i) ||
       transcript.match(/I am (\w+)/i);
-    const name = nameMatch ? nameMatch[1] : "Unknown";
+    const name = nameMatch ? nameMatch[1] : "Customer";
 
-    const companyName =
-      dynamic.company || transcript.match(/from (.*?)(?:\.|$)/i)?.[1] || "";
+    const companyName = dynamic.company || transcript.match(/from (.*?)(?:\.|$)/i)?.[1] || "";
 
     const contactId = await createOrUpdateContact(token, {
       Last_Name: name,
@@ -161,15 +134,9 @@ export async function POST(req: Request) {
 
     const dealResult = await createDeal(token, dealData);
 
-    return new Response(JSON.stringify({ success: true, deal: dealResult }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    return NextResponse.json({ success: true, deal: dealResult });
   } catch (err: any) {
     console.error("❌ Error in Retell webhook:", err);
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
