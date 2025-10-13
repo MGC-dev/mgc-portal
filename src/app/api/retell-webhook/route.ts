@@ -39,14 +39,14 @@ async function getZohoToken(): Promise<string> {
 // Push new lead to Zoho CRM
 async function createZohoLead(payload: any) {
   const token = await getZohoToken();
-
+  const userTranscript = payload.call.transcript || "";
   const leadData = {
-    Last_Name: payload.client_name || payload.name || "Unknown",
-    Company: payload.company || "Retell Automation",
-    Description: payload.summary || JSON.stringify(payload),
-    Email: payload.email || "",
-    Phone: payload.phone || "",
-  };
+  Last_Name: userTranscript ? userTranscript.split(".")[0].trim() : "Unknown",
+  Company: payload.call.agent_name || "Retell Automation",
+  Description: payload.call.call_analysis.call_summary || userTranscript,
+  Email: "", // Retell doesn’t send email here
+  Phone: "", // Retell doesn’t send phone here
+};
 
   const response = await fetch("https://www.zohoapis.com/crm/v2/Leads", {
     method: "POST",
