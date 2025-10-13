@@ -40,13 +40,33 @@ async function getZohoToken(): Promise<string> {
 async function createZohoLead(payload: any) {
   const token = await getZohoToken();
   const userTranscript = payload.call.transcript || "";
-  const leadData = {
-    Last_Name: userTranscript ? userTranscript.split(".")[0].trim() : "Unknown",
-    Company: payload.call.agent_name || "Retell Automation",
-    Description: payload.call.call_analysis?.call_summary || userTranscript,
-    Email: "", // Retell doesn’t send email here
-    Phone: "", // Retell doesn’t send phone here
-  };
+  // Try multiple patterns for extracting the name - For demo purpose
+    const namePatterns = [
+      /My name is (\w+)/i,
+      /This is (\w+)/i,
+      /I am (\w+)/i,
+      /This (\w+)/i
+    ];
+
+    let lastName = "Unknown";
+
+    for (const pattern of namePatterns) {
+      const match = userTranscript?.match(pattern);
+      if (match && match[1]) {
+        lastName = match[1];
+        break; // Stop at first match
+      }
+    }
+
+    const leadData = {
+      Last_Name: lastName,
+      Company: payload.call.agent_name || "Retell Automation",
+      Description: payload.call.call_analysis?.call_summary || userTranscript || "No description",
+      Email: payload.call.collected_dynamic_variables?.email || "",
+      Phone: payload.call.collected_dynamic_variables?.phone || "",
+      Lead_Source: "Retell Test Agent",
+    };
+
 
   const response = await fetch("https://www.zohoapis.com/crm/v2/Leads", {
     method: "POST",
