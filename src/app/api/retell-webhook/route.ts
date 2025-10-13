@@ -1,11 +1,10 @@
-// app/api/retell-webhook/route.ts
 import { NextRequest } from "next/server";
 
-// In-memory cache for Zoho token
+// Simple in-memory cache for access token
 let cachedToken: string | null = null;
-let tokenExpiry: number | null = null; // timestamp in ms
+let tokenExpiry: number | null = null;
 
-// Get Zoho Access Token (auto-refresh)
+// 1️⃣ Get Zoho Bigin Access Token
 async function getZohoToken(): Promise<string> {
   const now = Date.now();
 
@@ -33,95 +32,139 @@ async function getZohoToken(): Promise<string> {
 
   cachedToken = data.access_token;
   tokenExpiry = now + (data.expires_in - 60) * 1000;
-  return data.access_token; // return the actual string
+  return data.access_token;
 }
 
-// Push new lead to Zoho CRM
-async function createZohoLead(payload: any) {
-  const token = await getZohoToken();
-  const userTranscript = payload.call.transcript || "";
-  // Try multiple patterns for extracting the name - For demo purpose
-    const namePatterns = [
-      /My name is (\w+)/i,
-      /This is (\w+)/i,
-      /I am (\w+)/i,
-      /This (\w+)/i
-    ];
-
-    let lastName = "Unknown";
-
-    for (const pattern of namePatterns) {
-      const match = userTranscript?.match(pattern);
-      if (match && match[1]) {
-        lastName = match[1];
-        break; // Stop at first match
-      }
+// 2️⃣ Create or Update Contact in Bigin
+async function createOrUpdateContact(token: string, contactData: any) {
+  const searchRes = await fetch(
+    `https://www.zohoapis.com/bigin/v2/Contacts/search?email=${contactData.Email}`,
+    {
+      headers: { Authorization: `Zoho-oauthtoken ${token}` },
     }
+  );
 
-    const leadData = {
-      Last_Name: lastName,
-      Company: payload.call.agent_name || "Retell Automation",
-      Description: payload.call.call_analysis?.call_summary || userTranscript || "No description",
-      Email: payload.call.collected_dynamic_variables?.email || "",
-      Phone: payload.call.collected_dynamic_variables?.phone || "",
-      Lead_Source: "Retell Test Agent",
-    };
+  const searchData = await searchRes.json();
 
+  if (searchData.data && searchData.data.length > 0) {
+    console.log("🔄 Contact already exists:", searchData.data[0].id);
+    return searchData.data[0].id;
+  }
 
-  const response = await fetch("https://www.zohoapis.com/bigin/v2/Deals", {
+  const res = await fetch("https://www.zohoapis.com/bigin/v2/Contacts", {
     method: "POST",
     headers: {
       Authorization: `Zoho-oauthtoken ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ data: [leadData], trigger: ["workflow"] }),
+    body: JSON.stringify({ data: [contactData] }),
   });
 
-  const text = await response.text();
-  let result;
-  try {
-    result = JSON.parse(text);
-  } catch (e) {
-    result = text;
+  const result = await res.json();
+  console.log("✅ Contact created:", result);
+  return result.data[0].details.id;
+}
+
+// 3️⃣ Create or Update Company
+async function createOrUpdateCompany(token: string, companyName: string) {
+  if (!companyName) return null;
+
+  const searchRes = await fetch(
+    `https://www.zohoapis.com/bigin/v2/Accounts/search?criteria=(Account_Name:equals:${companyName})`,
+    {
+      headers: { Authorization: `Zoho-oauthtoken ${token}` },
+    }
+  );
+
+  const searchData = await searchRes.json();
+
+  if (searchData.data && searchData.data.length > 0) {
+    console.log("🔄 Company exists:", searchData.data[0].id);
+    return searchData.data[0].id;
   }
 
-  if (!response.ok) {
-    console.error("❌ Zoho CRM error:", result);
-    throw new Error("Zoho CRM lead creation failed");
-  } else {
-    console.log("✅ Lead added to Zoho CRM:", result);
-  }
+  const res = await fetch("https://www.zohoapis.com/bigin/v2/Accounts", {
+    method: "POST",
+    headers: {
+      Authorization: `Zoho-oauthtoken ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      data: [{ Account_Name: companyName }],
+    }),
+  });
 
+  const result = await res.json();
+  console.log("✅ Company created:", result);
+  return result.data[0].details.id;
+}
+
+// 4️⃣ Create Deal (linked to contact & company)
+async function createDeal(token: string, dealData: any) {
+  const res = await fetch("https://www.zohoapis.com/bigin/v2/Deals", {
+    method: "POST",
+    headers: {
+      Authorization: `Zoho-oauthtoken ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ data: [dealData], trigger: ["workflow"] }),
+  });
+
+  const result = await res.json();
+  console.log("✅ Deal created:", result);
   return result;
 }
 
-// GET handler — for testing in browser
-export async function GET() {
-  return new Response(
-    "Retell webhook endpoint is running. Send POST requests to trigger Zoho.",
-    { status: 200, headers: { "Content-Type": "text/plain" } }
-  );
-}
-
-// POST handler — Retell webhook
+// 5️⃣ Main Webhook Handler
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    console.log("📩 RETELL WEBHOOK RECEIVED at", new Date().toISOString());
-    console.log("Full payload:", JSON.stringify(body, null, 2));
+    console.log("📩 Retell webhook received:", JSON.stringify(body, null, 2));
 
     const payload = (body as any).data || body;
+    const token = await getZohoToken();
 
-    const zohoResult = await createZohoLead(payload);
+    // Extract info from conversation
+    const transcript = payload.call?.transcript || "";
+    const dynamic = payload.call?.collected_dynamic_variables || {};
 
-    return new Response(JSON.stringify({ success: true, zoho: zohoResult }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
+    const nameMatch =
+      transcript.match(/My name is (\w+)/i) ||
+      transcript.match(/This is (\w+)/i) ||
+      transcript.match(/I am (\w+)/i);
+    const name = nameMatch ? nameMatch[1] : "Unknown";
+
+    const companyName =
+      dynamic.company ||
+      (transcript.match(/from (.*?)(?:\.|$)/i)?.[1] ?? "");
+
+    const contactId = await createOrUpdateContact(token, {
+      Last_Name: name,
+      Email: dynamic.email || "",
+      Phone: dynamic.phone || "",
     });
-  } catch (err: any) {
-    console.error("❌ Webhook processing error:", err);
+
+    const companyId = await createOrUpdateCompany(token, companyName);
+
+    const dealData = {
+      Deal_Name: `Conversation with ${name}`,
+      Stage: "New",
+      Amount: 0,
+      Contact_Name: contactId,
+      Account_Name: companyId,
+      Description: payload.call.call_analysis?.call_summary || transcript,
+    };
+
+    const dealResult = await createDeal(token, dealData);
+
     return new Response(
-      JSON.stringify({ error: "Internal Server Error", detail: err.message }),
+      JSON.stringify({ success: true, deal: dealResult }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  } catch (err: any) {
+    console.error("❌ Error in Retell webhook:", err);
+    return new Response(
+      JSON.stringify({ error: err.message }),
       { status: 500, headers: { "Content-Type": "application/json" } }
     );
   }
