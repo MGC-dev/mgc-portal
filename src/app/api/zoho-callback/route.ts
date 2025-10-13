@@ -12,6 +12,7 @@ export async function GET(req: NextRequest) {
 
     console.log("🔑 Received Zoho auth code:", code);
 
+    // Exchange authorization code for access & refresh token
     const response = await fetch("https://accounts.zoho.com/oauth/v2/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },

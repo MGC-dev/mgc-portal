@@ -31,17 +31,15 @@ async function getZohoToken(): Promise<string> {
   }
 
   cachedToken = data.access_token;
-  tokenExpiry = now + (data.expires_in - 60) * 1000;
+  tokenExpiry = now + (data.expires_in - 60) * 1000; // buffer 1 min
   return data.access_token;
 }
 
-// 2️⃣ Create or Update Contact in Bigin
+// 2️⃣ Create or Update Contact
 async function createOrUpdateContact(token: string, contactData: any) {
   const searchRes = await fetch(
     `https://www.zohoapis.com/bigin/v2/Contacts/search?email=${contactData.Email}`,
-    {
-      headers: { Authorization: `Zoho-oauthtoken ${token}` },
-    }
+    { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
   );
 
   const searchData = await searchRes.json();
@@ -61,6 +59,12 @@ async function createOrUpdateContact(token: string, contactData: any) {
   });
 
   const result = await res.json();
+
+  if (!result.data || result.data.length === 0) {
+    console.error("❌ Failed to create contact:", result);
+    return null;
+  }
+
   console.log("✅ Contact created:", result);
   return result.data[0].details.id;
 }
@@ -71,9 +75,7 @@ async function createOrUpdateCompany(token: string, companyName: string) {
 
   const searchRes = await fetch(
     `https://www.zohoapis.com/bigin/v2/Accounts/search?criteria=(Account_Name:equals:${companyName})`,
-    {
-      headers: { Authorization: `Zoho-oauthtoken ${token}` },
-    }
+    { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
   );
 
   const searchData = await searchRes.json();
@@ -89,17 +91,21 @@ async function createOrUpdateCompany(token: string, companyName: string) {
       Authorization: `Zoho-oauthtoken ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      data: [{ Account_Name: companyName }],
-    }),
+    body: JSON.stringify({ data: [{ Account_Name: companyName }] }),
   });
 
   const result = await res.json();
+
+  if (!result.data || result.data.length === 0) {
+    console.error("❌ Failed to create company:", result);
+    return null;
+  }
+
   console.log("✅ Company created:", result);
   return result.data[0].details.id;
 }
 
-// 4️⃣ Create Deal (linked to contact & company)
+// 4️⃣ Create Deal
 async function createDeal(token: string, dealData: any) {
   const res = await fetch("https://www.zohoapis.com/bigin/v2/Deals", {
     method: "POST",
@@ -115,7 +121,7 @@ async function createDeal(token: string, dealData: any) {
   return result;
 }
 
-// 5️⃣ Main Webhook Handler
+// 5️⃣ Webhook handler
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -124,7 +130,6 @@ export async function POST(req: Request) {
     const payload = (body as any).data || body;
     const token = await getZohoToken();
 
-    // Extract info from conversation
     const transcript = payload.call?.transcript || "";
     const dynamic = payload.call?.collected_dynamic_variables || {};
 
@@ -135,8 +140,7 @@ export async function POST(req: Request) {
     const name = nameMatch ? nameMatch[1] : "Unknown";
 
     const companyName =
-      dynamic.company ||
-      (transcript.match(/from (.*?)(?:\.|$)/i)?.[1] ?? "");
+      dynamic.company || transcript.match(/from (.*?)(?:\.|$)/i)?.[1] || "";
 
     const contactId = await createOrUpdateContact(token, {
       Last_Name: name,
@@ -157,15 +161,15 @@ export async function POST(req: Request) {
 
     const dealResult = await createDeal(token, dealData);
 
-    return new Response(
-      JSON.stringify({ success: true, deal: dealResult }),
-      { status: 200, headers: { "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ success: true, deal: dealResult }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   } catch (err: any) {
     console.error("❌ Error in Retell webhook:", err);
-    return new Response(
-      JSON.stringify({ error: err.message }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 }
