@@ -1,11 +1,19 @@
 // app/api/retell-webhook/route.ts
 import { NextRequest } from "next/server";
 
-let accessTokenCache = process.env.ZOHO_ACCESS_TOKEN;
+// In-memory cache for Zoho token
+let cachedToken: string | null = null;
+let tokenExpiry: number | null = null; // timestamp in ms
 
-// Refresh Zoho Access Token if expired
-async function refreshZohoToken(): Promise<string | null> {
-  const response = await fetch("https://accounts.zoho.com/oauth/v2/token", {
+// Get Zoho Access Token (auto-refresh)
+async function getZohoToken(): Promise<string> {
+  const now = Date.now();
+
+  if (cachedToken && tokenExpiry && now < tokenExpiry) {
+    return cachedToken;
+  }
+
+  const res = await fetch("https://accounts.zoho.com/oauth/v2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -16,22 +24,29 @@ async function refreshZohoToken(): Promise<string | null> {
     }),
   });
 
-  const data = await response.json();
+  const data = await res.json();
 
-  if (data.access_token) {
-    console.log("✅ Refreshed Zoho Access Token");
-    accessTokenCache = data.access_token;
-    return data.access_token;
+  if (!data.access_token) {
+    console.error("❌ Failed to refresh Zoho token:", data);
+    throw new Error("Zoho token refresh failed");
   }
 
-  console.error("❌ Failed to refresh Zoho token:", data);
-  return null;
+  cachedToken = data.access_token;
+  tokenExpiry = now + (data.expires_in - 60) * 1000;
+  return data.access_token; // return the actual string
 }
 
 // Push new lead to Zoho CRM
-async function createZohoLead(retellData: any) {
-  const token = accessTokenCache || (await refreshZohoToken());
-  if (!token) throw new Error("Zoho access token unavailable");
+async function createZohoLead(payload: any) {
+  const token = await getZohoToken();
+
+  const leadData = {
+    Last_Name: payload.client_name || payload.name || "Unknown",
+    Company: payload.company || "Retell Automation",
+    Description: payload.summary || JSON.stringify(payload),
+    Email: payload.email || "",
+    Phone: payload.phone || "",
+  };
 
   const response = await fetch("https://www.zohoapis.com/crm/v2/Leads", {
     method: "POST",
@@ -39,39 +54,36 @@ async function createZohoLead(retellData: any) {
       Authorization: `Zoho-oauthtoken ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      data: [
-        {
-          Last_Name: retellData.client_name || "Unknown",
-          Company: "Retell Integration",
-          Description: retellData.summary || JSON.stringify(retellData),
-          Email: retellData.email || "",
-          Phone: retellData.phone || "",
-        },
-      ],
-    }),
+    body: JSON.stringify({ data: [leadData], trigger: ["workflow"] }),
   });
 
-  const result = await response.json();
+  const text = await response.text();
+  let result;
+  try {
+    result = JSON.parse(text);
+  } catch (e) {
+    result = text;
+  }
 
   if (!response.ok) {
     console.error("❌ Zoho CRM error:", result);
+    throw new Error("Zoho CRM lead creation failed");
   } else {
-    console.log("✅ Lead added in Zoho CRM");
+    console.log("✅ Lead added to Zoho CRM:", result);
   }
+
+  return result;
 }
 
 // GET handler — for testing in browser
 export async function GET() {
-  return new Response("Retell webhook endpoint is running. Send POST requests to trigger Zoho.", {
-    status: 200,
-    headers: { "Content-Type": "text/plain" },
-  });
+  return new Response(
+    "Retell webhook endpoint is running. Send POST requests to trigger Zoho.",
+    { status: 200, headers: { "Content-Type": "text/plain" } }
+  );
 }
 
 // POST handler — Retell webhook
-
-
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -80,46 +92,17 @@ export async function POST(req: Request) {
 
     const payload = (body as any).data || body;
 
-    // Try to create Zoho lead and capture response
-    const token = accessTokenCache || (await refreshZohoToken());
-    if (!token) {
-      console.error("No Zoho token available");
-      return new Response(JSON.stringify({ error: "No Zoho token" }), { status: 500 });
-    }
+    const zohoResult = await createZohoLead(payload);
 
-    const zohoResp = await fetch("https://www.zohoapis.com/crm/v2/Leads", {
-      method: "POST",
-      headers: {
-        Authorization: `Zoho-oauthtoken ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        data: [
-          {
-            Last_Name: payload.client_name || payload.name || "Unknown",
-            Company: payload.company || "Retell Automation",
-            Description: payload.summary || JSON.stringify(payload),
-            Email: payload.email || "",
-            Phone: payload.phone || "",
-          },
-        ],
-      }),
+    return new Response(JSON.stringify({ success: true, zoho: zohoResult }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
     });
-
-    const zohoText = await zohoResp.text();
-    let zohoJson;
-    try { zohoJson = JSON.parse(zohoText); } catch(e) { zohoJson = zohoText; }
-
-    console.log("Zoho response status:", zohoResp.status);
-    console.log("Zoho response body:", zohoJson);
-
-    if (!zohoResp.ok) {
-      return new Response(JSON.stringify({ error: "Zoho error", detail: zohoJson }), { status: 500 });
-    }
-
-    return new Response(JSON.stringify({ success: true, zoho: zohoJson }), { status: 200 });
-  } catch (err) {
-    console.error("Webhook processing error:", err);
-    return new Response(JSON.stringify({ error: "Internal Server Error" }), { status: 500 });
+  } catch (err: any) {
+    console.error("❌ Webhook processing error:", err);
+    return new Response(
+      JSON.stringify({ error: "Internal Server Error", detail: err.message }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
   }
 }
