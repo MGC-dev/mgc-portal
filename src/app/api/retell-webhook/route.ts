@@ -68,7 +68,7 @@ async function createZohoLead(payload: any) {
     };
 
 
-  const response = await fetch("https://www.zohoapis.com/crm/v2/Leads", {
+  const response = await fetch("https://www.zohoapis.com/bigin/v2/Deals", {
     method: "POST",
     headers: {
       Authorization: `Zoho-oauthtoken ${token}`,
