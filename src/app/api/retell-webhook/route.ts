@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 let accessToken: string | null = null;
 
-// 🔁 Refresh Zoho token
+// Refresh Zoho token
 async function refreshZohoToken() {
   const res = await fetch("https://accounts.zoho.com/oauth/v2/token", {
     method: "POST",
@@ -22,8 +22,8 @@ async function refreshZohoToken() {
   return accessToken;
 }
 
-// 🔹 Send Zoho Email
-async function sendZohoEmail(toEmail: string, subject: string, message: string) {
+// Send email via Zoho Mail API
+async function sendZohoEmail(toEmail: string | null, subject: string, message: string) {
   if (!toEmail) {
     console.warn("No user email provided. Skipping email send.");
     return;
@@ -32,7 +32,7 @@ async function sendZohoEmail(toEmail: string, subject: string, message: string) 
   const token = accessToken || (await refreshZohoToken());
   if (!token) throw new Error("Missing Zoho token");
 
-  const response = await fetch("https://www.zohoapis.com/crm/v2/Emails", {
+  const res = await fetch("https://www.zohoapis.com/crm/v2/Emails", {
     method: "POST",
     headers: {
       Authorization: `Zoho-oauthtoken ${token}`,
@@ -50,25 +50,16 @@ async function sendZohoEmail(toEmail: string, subject: string, message: string) 
     }),
   });
 
-  const text = await response.text();
-  let data;
+  const text = await res.text();
   try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
+    return text ? JSON.parse(text) : {};
+  } catch (err) {
     console.error("Failed to parse Zoho response:", text);
-    data = { error: "Invalid JSON response", raw: text };
+    return { error: "Invalid JSON response", raw: text };
   }
-
-  if (data?.code && data.code !== "SUCCESS") {
-    console.error("Failed to send email:", data);
-  } else {
-    console.log("✅ Email sent successfully:", data);
-  }
-
-  return data;
 }
 
-// 🔹 Check if lead exists
+// Check if lead exists by email
 async function leadExists(email: string, token: string) {
   if (!email) return false;
   const resp = await fetch(`https://www.zohoapis.com/crm/v2/Leads/search?email=${email}`, {
@@ -78,34 +69,45 @@ async function leadExists(email: string, token: string) {
   return data.data?.length > 0;
 }
 
-// 🔹 Main webhook
+// Extract variables from transcript
+function extractFromTranscript(transcript: string) {
+  const userNameMatch = transcript.match(/my name is ([A-Za-z ]+)/i);
+  const emailMatch = transcript.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  const locationMatch = transcript.match(/located in ([A-Za-z, ]+)/i);
+  const companyMatch = transcript.match(/company is ([A-Za-z0-9 &]+)/i);
+  const industryMatch = transcript.match(/industry is ([A-Za-z]+)/i);
+
+  return {
+    userName: userNameMatch ? userNameMatch[1].trim() : "Unknown",
+    userEmail: emailMatch ? emailMatch[0] : null,
+    company: companyMatch ? companyMatch[1].trim() : "Retell Automation",
+    industry: industryMatch ? industryMatch[1].trim() : "",
+    location: locationMatch ? locationMatch[1].trim() : "",
+  };
+}
+
+// Main webhook
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    console.log("💡 Incoming Retell payload:", JSON.stringify(body, null, 2));
+    const payload = body.data || body;
 
-    // Only handle 'call_analyzed' event
-    if (body.event !== "call_analyzed") {
-      console.log(`Skipping event: ${body.event}`);
-      return NextResponse.json({ success: true, message: "Event skipped" });
+    // Try variables first, fallback to transcript
+    let userName = payload.user_name;
+    let userEmail = payload.user_email;
+    let company = payload.company_name;
+    let industry = payload.industry;
+    let location = payload.location;
+
+    if (!userName || !userEmail) {
+      const transcript = payload.call?.transcript || "";
+      const extracted = extractFromTranscript(transcript);
+      userName = userName || extracted.userName;
+      userEmail = userEmail || extracted.userEmail;
+      company = company || extracted.company;
+      industry = industry || extracted.industry;
+      location = location || extracted.location;
     }
-
-    const payload = body.data || {};
-
-    // Extract variables from Retell
-    const variables = payload.variables || {};
-    const userName = variables.user_name || "Unknown";
-    const userEmail = variables.user_email || null;
-    const company = variables.company_name || "Retell Automation";
-    const industry = variables.industry || "";
-    const location = variables.location || "";
-    const opsFocus = variables.ops_focus || "";
-    const mainChallenge = variables.main_challenge || "";
-    const topGoals = variables.top_goals || "";
-    const pastConsultant = variables.past_consultant || "";
-    const systems = variables.systems || "";
-    const timeline = variables.timeline || "";
-    const budget = variables.budget || "";
 
     const token = accessToken || (await refreshZohoToken());
     if (!token) return NextResponse.json({ error: "No Zoho token" }, { status: 500 });
@@ -114,7 +116,6 @@ export async function POST(req: NextRequest) {
     if (userEmail && (await leadExists(userEmail, token))) {
       console.log("Lead already exists for email:", userEmail);
     } else {
-      // Create lead
       const leadResp = await fetch("https://www.zohoapis.com/crm/v2/Leads", {
         method: "POST",
         headers: {
@@ -126,7 +127,7 @@ export async function POST(req: NextRequest) {
             {
               Last_Name: userName,
               Company: company,
-              Description: `Industry: ${industry}\nLocation: ${location}\nOps Focus: ${opsFocus}\nMain Challenge: ${mainChallenge}\nTop Goals: ${topGoals}\nPast Consultant: ${pastConsultant}\nSystems: ${systems}\nTimeline: ${timeline}\nBudget: ${budget}`,
+              Description: `Industry: ${industry}\nLocation: ${location}`,
               Lead_Source: "Retell AI",
               Email: userEmail,
               Country: location,
@@ -139,7 +140,7 @@ export async function POST(req: NextRequest) {
       console.log("✅ Lead created:", leadData);
     }
 
-    // Send email if user_email exists
+    // Send email
     const emailContent = `
       <h3>Retell Conversation Summary</h3>
       <p><strong>Name:</strong> ${userName}</p>
@@ -147,13 +148,6 @@ export async function POST(req: NextRequest) {
       <p><strong>Company:</strong> ${company}</p>
       <p><strong>Industry:</strong> ${industry}</p>
       <p><strong>Location:</strong> ${location}</p>
-      <p><strong>Ops Focus:</strong> ${opsFocus}</p>
-      <p><strong>Main Challenge:</strong> ${mainChallenge}</p>
-      <p><strong>Top Goals:</strong> ${topGoals}</p>
-      <p><strong>Past Consultant:</strong> ${pastConsultant}</p>
-      <p><strong>Systems:</strong> ${systems}</p>
-      <p><strong>Timeline:</strong> ${timeline}</p>
-      <p><strong>Budget:</strong> ${budget}</p>
     `;
 
     await sendZohoEmail(userEmail, "Retell Conversation Completed", emailContent);
