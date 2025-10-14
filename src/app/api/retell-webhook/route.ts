@@ -22,68 +22,39 @@ async function refreshZohoToken() {
   return accessToken;
 }
 
-// Send email via Zoho Mail API (with retry)
+// Send email via Zoho Mail API
 async function sendZohoEmail(toEmail: string, subject: string, message: string) {
   const send = async (token: string) => {
-    const response = await fetch("https://www.zohoapis.com/crm/v2/Emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Zoho-oauthtoken ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        data: [
-          {
-            from: { email: "sduria@mgconsultingfirm.com" },
-            to: [{ email: toEmail }],
-            subject,
-            content: message,
-          },
-        ],
-      }),
-    });
+  const response = await fetch("https://www.zohoapis.com/crm/v2/Emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Zoho-oauthtoken ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      data: [
+        {
+          from: { email: "sduria@mgconsultingfirm.com" },
+          to: [{ email: toEmail }],
+          subject,
+          content: message,
+        },
+      ],
+    }),
+  });
 
-    const data = await response.json();
-    return { status: response.status, data };
-  };
-
-  let token = accessToken || (await refreshZohoToken());
-  if (!token) throw new Error("Missing Zoho token");
-
-  let result = await send(token);
-
-  if (
-    result.status === 401 ||
-    (result.data?.code === "NO_PERMISSION" && result.data?.message?.includes("permission"))
-  ) {
-    console.warn("Token expired or permission denied, refreshing token and retrying...");
-    token = await refreshZohoToken();
-    if (!token) throw new Error("Failed to refresh Zoho token");
-    result = await send(token);
+  const text = await response.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (err) {
+    console.error("Failed to parse Zoho response:", text);
+    data = { error: "Invalid JSON response", raw: text };
   }
 
-  if (result.data?.code && result.data?.code !== "SUCCESS") {
-    console.error("Failed to send email:", result.data);
-    throw new Error(result.data?.message || "Zoho email API error");
-  }
+  return { status: response.status, data };
+};
 
-  console.log("Email sent successfully:", result.data);
-  return result.data;
-}
-
-// Extract structured details from transcript
-function extractDetails(transcript: string) {
-  const nameMatch = transcript.match(/(?:my name is|i am|this is)\s+([A-Za-z ]+)/i);
-  const emailMatch = transcript.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i);
-  const countryMatch = transcript.match(/country\s*[:\-]?\s*([A-Za-z ]+)/i);
-  const businessMatch = transcript.match(/business(?: is| name)?\s*[:\-]?\s*([A-Za-z0-9 &]+)/i);
-
-  return {
-    name: nameMatch ? nameMatch[1].trim() : "Unknown",
-    email: emailMatch ? emailMatch[0].trim() : null,
-    country: countryMatch ? countryMatch[1].trim() : null,
-    business: businessMatch ? businessMatch[1].trim() : null,
-  };
 }
 
 // Check if lead exists by email
@@ -102,18 +73,28 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const payload = body.data || body;
 
-    const transcript = payload.call?.transcript || "";
-    const summary = payload.call?.call_analysis?.call_summary || transcript;
-    const details = extractDetails(transcript);
+    // ✅ Use extracted variables from Retell AI flow
+    const userName = payload.user_name || "Unknown";
+    const userEmail = payload.user_email || null;
+    const company = payload.company_name || "Retell Automation";
+    const industry = payload.industry || "";
+    const location = payload.location || "";
+    const opsFocus = payload.ops_focus || "";
+    const mainChallenge = payload.main_challenge || "";
+    const topGoals = payload.top_goals || "";
+    const pastConsultant = payload.past_consultant || "";
+    const systems = payload.systems || "";
+    const timeline = payload.timeline || "";
+    const budget = payload.budget || "";
 
     const token = accessToken || (await refreshZohoToken());
     if (!token) return NextResponse.json({ error: "No Zoho token" }, { status: 500 });
 
     // Avoid duplicate leads
-    if (details.email && (await leadExists(details.email, token))) {
-      console.log("Lead already exists for email:", details.email);
+    if (userEmail && (await leadExists(userEmail, token))) {
+      console.log("Lead already exists for email:", userEmail);
     } else {
-      // Create Lead
+      // Create lead
       const leadResp = await fetch("https://www.zohoapis.com/crm/v2/Leads", {
         method: "POST",
         headers: {
@@ -123,12 +104,12 @@ export async function POST(req: NextRequest) {
         body: JSON.stringify({
           data: [
             {
-              Last_Name: details.name,
-              Company: details.business || "Retell Automation",
-              Description: summary,
+              Last_Name: userName,
+              Company: company,
+              Description: `Industry: ${industry}\nLocation: ${location}\nOps Focus: ${opsFocus}\nMain Challenge: ${mainChallenge}\nTop Goals: ${topGoals}\nPast Consultant: ${pastConsultant}\nSystems: ${systems}\nTimeline: ${timeline}\nBudget: ${budget}`,
               Lead_Source: "Retell AI",
-              Email: details.email,
-              Country: details.country,
+              Email: userEmail,
+              Country: location,
             },
           ],
         }),
@@ -141,15 +122,21 @@ export async function POST(req: NextRequest) {
     // Send transcript email
     const emailContent = `
       <h3>Retell Conversation Summary</h3>
-      <p><strong>Lead Name:</strong> ${details.name}</p>
-      <p><strong>Email:</strong> ${details.email || "N/A"}</p>
-      <p><strong>Country:</strong> ${details.country || "N/A"}</p>
-      <p><strong>Business:</strong> ${details.business || "N/A"}</p>
-      <p><strong>Summary:</strong> ${summary}</p>
-      <pre style="background:#f9f9f9;padding:10px;">${transcript}</pre>
+      <p><strong>Name:</strong> ${userName}</p>
+      <p><strong>Email:</strong> ${userEmail || "N/A"}</p>
+      <p><strong>Company:</strong> ${company}</p>
+      <p><strong>Industry:</strong> ${industry}</p>
+      <p><strong>Location:</strong> ${location}</p>
+      <p><strong>Ops Focus:</strong> ${opsFocus}</p>
+      <p><strong>Main Challenge:</strong> ${mainChallenge}</p>
+      <p><strong>Top Goals:</strong> ${topGoals}</p>
+      <p><strong>Past Consultant:</strong> ${pastConsultant}</p>
+      <p><strong>Systems:</strong> ${systems}</p>
+      <p><strong>Timeline:</strong> ${timeline}</p>
+      <p><strong>Budget:</strong> ${budget}</p>
     `;
 
-    await sendZohoEmail("aksuba7@gmail.com", "Retell Conversation Completed", emailContent);
+    await sendZohoEmail(userEmail, "Retell Conversation Completed", emailContent);
 
     return NextResponse.json({ success: true, message: "Lead added and email sent" });
   } catch (err) {
