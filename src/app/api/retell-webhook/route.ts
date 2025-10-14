@@ -38,7 +38,7 @@ async function getZohoToken(): Promise<string> {
 // 2️⃣ Create or Update Contact
 async function createOrUpdateContact(token: string, contactData: any) {
   const searchRes = await fetch(
-    `https://www.zohoapis.com/bigin/v2/Contacts/search?email=${contactData.Email}`,
+    `https://www.zohoapis.com/bigin/v1/Contacts/search?email=${contactData.Email}`,
     { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
   );
 
@@ -49,7 +49,7 @@ async function createOrUpdateContact(token: string, contactData: any) {
     return searchData.data[0].id;
   }
 
-  const res = await fetch("https://www.zohoapis.com/bigin/v2/Contacts", {
+  const res = await fetch("https://www.zohoapis.com/bigin/v1/Contacts", {
     method: "POST",
     headers: {
       Authorization: `Zoho-oauthtoken ${token}`,
@@ -69,12 +69,12 @@ async function createOrUpdateContact(token: string, contactData: any) {
   return result.data[0].details.id;
 }
 
-// 3️⃣ Create or Update Company
+// 3️⃣ Create or Update Company (Account)
 async function createOrUpdateCompany(token: string, companyName: string) {
   if (!companyName) return null;
 
   const searchRes = await fetch(
-    `https://www.zohoapis.com/bigin/v2/Accounts/search?criteria=(Account_Name:equals:${companyName})`,
+    `https://www.zohoapis.com/bigin/v1/Accounts/search?criteria=(Account_Name:equals:${companyName})`,
     { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
   );
 
@@ -85,7 +85,7 @@ async function createOrUpdateCompany(token: string, companyName: string) {
     return searchData.data[0].id;
   }
 
-  const res = await fetch("https://www.zohoapis.com/bigin/v2/Accounts", {
+  const res = await fetch("https://www.zohoapis.com/bigin/v1/Accounts", {
     method: "POST",
     headers: {
       Authorization: `Zoho-oauthtoken ${token}`,
@@ -109,7 +109,7 @@ async function createOrUpdateCompany(token: string, companyName: string) {
 
 // 4️⃣ Create Deal in MG Client Onboarding → Lead Requested
 async function createDeal(token: string, dealData: any) {
-  const res = await fetch("https://www.zohoapis.com/bigin/v2/Deals", {
+  const res = await fetch("https://www.zohoapis.com/bigin/v1/Deals", {
     method: "POST",
     headers: {
       Authorization: `Zoho-oauthtoken ${token}`,
