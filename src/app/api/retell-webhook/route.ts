@@ -34,7 +34,7 @@ async function sendZohoEmail(toEmail: string, subject: string, message: string) 
     body: JSON.stringify({
       data: [
         {
-          from: { email: "sduria@mgconsultingfirm.com" },
+          from: { email: "mgcentral@mgconsultingfirm.com" },
           to: [{ email: toEmail }],
           subject,
           content: message,
