@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(req: NextRequest) {
-  const code = req.nextUrl.searchParams.get("code");
-  if (!code) return NextResponse.json({ error: "Missing authorization code" }, { status: 400 });
-
   try {
+    const code = req.nextUrl.searchParams.get("code");
+    if (!code) {
+      return NextResponse.json({ error: "❌ Missing authorization code" }, { status: 400 });
+    }
+
+    console.log("🔑 Received Zoho Authorization Code:", code);
+
+    // Prepare token request
     const params = new URLSearchParams({
       grant_type: "authorization_code",
       client_id: process.env.ZOHO_CLIENT_ID!,
@@ -13,28 +18,49 @@ export async function GET(req: NextRequest) {
       code,
     });
 
-    const response = await fetch("https://accounts.zoho.com/oauth/v2/token", {
+    // Exchange authorization code for access & refresh tokens
+    const tokenResponse = await fetch("https://accounts.zoho.com/oauth/v2/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: params.toString(),
     });
 
-    const data = await response.json();
-    console.log("🔑 Zoho Token Response:", data);
+    const data = await tokenResponse.json();
+    console.log("🔐 Zoho Token Exchange Response:", data);
 
-    if (data.error) {
-      return NextResponse.json({ error: data }, { status: 400 });
+    // Handle error response from Zoho
+    if (!tokenResponse.ok || data.error) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: "Zoho token exchange failed",
+          details: data,
+        },
+        { status: 400 }
+      );
     }
 
-    // Save these tokens in Vercel ENV manually
-    return NextResponse.json({
-      message: "✅ Zoho token exchange successful",
-      access_token: data.access_token,
-      refresh_token: data.refresh_token,
-      expires_in: data.expires_in,
-    });
-  } catch (err: any) {
-    console.error("❌ Zoho callback error:", err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    // Success response
+    return NextResponse.json(
+      {
+        success: true,
+        message: "✅ Zoho token exchange successful",
+        access_token: data.access_token,
+        refresh_token: data.refresh_token,
+        expires_in: data.expires_in,
+        token_type: data.token_type,
+      },
+      { status: 200 }
+    );
+  } catch (error: any) {
+    console.error("❌ Zoho Callback Error:", error);
+    return NextResponse.json(
+      {
+        success: false,
+        message: "Internal Server Error during Zoho OAuth callback",
+        error: error?.message || error,
+      },
+      { status: 500 }
+    );
   }
 }

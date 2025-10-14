@@ -1,17 +1,9 @@
 import { NextRequest } from "next/server";
 
-// 🔒 In-memory Zoho token cache
-let cachedToken: string | null = null;
-let tokenExpiry: number | null = null;
+let accessToken: string | null = null;
 
-// 1️⃣ Get Zoho Bigin Access Token
-async function getZohoToken(): Promise<string> {
-  const now = Date.now();
-
-  if (cachedToken && tokenExpiry && now < tokenExpiry) {
-    return cachedToken;
-  }
-
+// 🔁 Refresh Zoho token
+async function refreshZohoToken() {
   const res = await fetch("https://accounts.zoho.com/oauth/v2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -24,164 +16,92 @@ async function getZohoToken(): Promise<string> {
   });
 
   const data = await res.json();
-
-  if (!data.access_token) {
-    console.error("❌ Failed to refresh Zoho token:", data);
-    throw new Error("Zoho token refresh failed");
-  }
-
-  cachedToken = data.access_token;
-  tokenExpiry = now + (data.expires_in - 60) * 1000;
-  return data.access_token;
+  if (data.access_token) accessToken = data.access_token;
+  else console.error("Failed to refresh token", data);
+  return accessToken;
 }
 
-// 2️⃣ Create or Update Contact
-async function createOrUpdateContact(token: string, contactData: any) {
-  const searchRes = await fetch(
-    `https://www.zohoapis.com/bigin/v1/Contacts/search?email=${contactData.Email}`,
-    { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
-  );
+// ✉️ Send email via Zoho Mail API
+async function sendZohoEmail(toEmail: string, subject: string, message: string) {
+  const token = accessToken || (await refreshZohoToken());
+  if (!token) throw new Error("Missing Zoho token");
 
-  const searchData = await searchRes.json();
+  const emailData = {
+    fromAddress: "yourname@yourdomain.com", // Your verified Zoho Mail
+    toAddress: [toEmail],
+    subject,
+    content: message,
+    mailFormat: "html",
+  };
 
-  if (searchData.data && searchData.data.length > 0) {
-    console.log("🔄 Contact already exists:", searchData.data[0].id);
-    return searchData.data[0].id;
-  }
-
-  const res = await fetch("https://www.zohoapis.com/bigin/v1/Contacts", {
+  const res = await fetch("https://mail.zoho.com/api/accounts/<your-account-id>/messages", {
     method: "POST",
     headers: {
       Authorization: `Zoho-oauthtoken ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ data: [contactData] }),
+    body: JSON.stringify(emailData),
   });
 
-  const result = await res.json();
-
-  if (!result.data || result.data.length === 0) {
-    console.error("❌ Failed to create contact:", result);
-    return null;
-  }
-
-  console.log("✅ Contact created:", result);
-  return result.data[0].details.id;
+  const data = await res.json();
+  console.log("Email sent response:", data);
+  return data;
 }
 
-// 3️⃣ Create or Update Company (Account)
-async function createOrUpdateCompany(token: string, companyName: string) {
-  if (!companyName) return null;
-
-  const searchRes = await fetch(
-    `https://www.zohoapis.com/bigin/v1/Accounts/search?criteria=(Account_Name:equals:${companyName})`,
-    { headers: { Authorization: `Zoho-oauthtoken ${token}` } }
-  );
-
-  const searchData = await searchRes.json();
-
-  if (searchData.data && searchData.data.length > 0) {
-    console.log("🔄 Company exists:", searchData.data[0].id);
-    return searchData.data[0].id;
-  }
-
-  const res = await fetch("https://www.zohoapis.com/bigin/v1/Accounts", {
-    method: "POST",
-    headers: {
-      Authorization: `Zoho-oauthtoken ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      data: [{ Account_Name: companyName }],
-    }),
-  });
-
-  const result = await res.json();
-
-  if (!result.data || result.data.length === 0) {
-    console.error("❌ Failed to create company:", result);
-    return null;
-  }
-
-  console.log("✅ Company created:", result);
-  return result.data[0].details.id;
+// 🧠 Extract name from transcript
+function extractName(transcript: string) {
+  const match = transcript?.match(/(?:my name is|this is|i am)\s+([A-Za-z ]+)/i);
+  return match ? match[1].trim() : "Unknown";
 }
 
-// 4️⃣ Create Deal in MG Client Onboarding → Lead Requested
-async function createDeal(token: string, dealData: any) {
-  const res = await fetch("https://www.zohoapis.com/bigin/v1/Deals", {
-    method: "POST",
-    headers: {
-      Authorization: `Zoho-oauthtoken ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      data: [
-        {
-          ...dealData,
-          Pipeline: "MG Client Onboarding",
-          Stage: "Lead Requested",
-        },
-      ],
-      trigger: ["workflow"],
-    }),
-  });
-
-  const result = await res.json();
-  console.log("✅ Deal created:", result);
-  return result;
-}
-
-// 5️⃣ Main Retell Webhook
-export async function POST(req: Request) {
+// 📩 Main webhook
+export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    console.log("📩 Retell webhook received:", JSON.stringify(body, null, 2));
+    const payload = body.data || body;
 
-    const payload = (body as any).data || body;
-    const token = await getZohoToken();
+    const transcript = payload.call.transcript || "";
+    const summary = payload.call.call_analysis?.call_summary || transcript;
+    const userName = extractName(transcript);
 
-    const transcript = payload.call?.transcript || "";
-    const dynamic = payload.call?.collected_dynamic_variables || {};
+    const token = accessToken || (await refreshZohoToken());
+    if (!token) return Response.json({ error: "No Zoho token" }, { status: 500 });
 
-    const nameMatch =
-      transcript.match(/My name is (\w+)/i) ||
-      transcript.match(/This is (\w+)/i) ||
-      transcript.match(/I am (\w+)/i);
-    const name = nameMatch ? nameMatch[1] : "Unknown";
-
-    const companyName =
-      dynamic.company || transcript.match(/from (.*?)(?:\.|$)/i)?.[1] || "";
-
-    const contactId = await createOrUpdateContact(token, {
-      Last_Name: name,
-      Email: dynamic.email || "",
-      Phone: dynamic.phone || "",
+    // 🧾 Create Lead in Zoho CRM
+    const leadResp = await fetch("https://www.zohoapis.com/crm/v2/Leads", {
+      method: "POST",
+      headers: {
+        Authorization: `Zoho-oauthtoken ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        data: [
+          {
+            Last_Name: userName,
+            Company: "Retell Automation",
+            Description: summary,
+            Lead_Source: "Retell AI",
+          },
+        ],
+      }),
     });
 
-    const companyId = await createOrUpdateCompany(token, companyName);
+    const leadData = await leadResp.json();
+    console.log("✅ Lead created:", leadData);
 
-    const dealData = {
-      Deal_Name: `Conversation with ${name}`,
-      Stage: "Lead Requested",
-      Pipeline: "MG Client Onboarding",
-      Amount: 0,
-      Contact_Name: contactId,
-      Account_Name: companyId,
-      Description: payload.call.call_analysis?.call_summary || transcript,
-    };
+    // 📤 Send transcript email
+    const emailContent = `
+      <h3>Retell Conversation Summary</h3>
+      <p><strong>Lead Name:</strong> ${userName}</p>
+      <p><strong>Summary:</strong> ${summary}</p>
+      <pre style="background:#f9f9f9;padding:10px;">${transcript}</pre>
+    `;
 
-    const dealResult = await createDeal(token, dealData);
+    await sendZohoEmail("aksuba7@gmail.com", "Retell Conversation Completed", emailContent);
 
-    return new Response(JSON.stringify({ success: true, deal: dealResult }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
-  } catch (err: any) {
-    console.error("❌ Error in Retell webhook:", err);
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
+    return Response.json({ success: true, message: "Lead added and email sent" });
+  } catch (err) {
+    console.error("Webhook error:", err);
+    return Response.json({ error: "Internal error" }, { status: 500 });
   }
 }
