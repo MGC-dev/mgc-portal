@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 let accessToken: string | null = null;
 
-// 🔁 Refresh Zoho token
+// Refresh Zoho token
 async function refreshZohoToken() {
   const res = await fetch("https://accounts.zoho.com/oauth/v2/token", {
     method: "POST",
@@ -22,9 +22,8 @@ async function refreshZohoToken() {
   return accessToken;
 }
 
-// ✉️ Send email via Zoho Mail API
+// Send email via Zoho Mail API (with retry)
 async function sendZohoEmail(toEmail: string, subject: string, message: string) {
-  // Internal function to send email with a given token
   const send = async (token: string) => {
     const response = await fetch("https://www.zohoapis.com/crm/v2/Emails", {
       method: "POST",
@@ -35,7 +34,7 @@ async function sendZohoEmail(toEmail: string, subject: string, message: string) 
       body: JSON.stringify({
         data: [
           {
-            from: { email: "sduria@mgconsultingfirm.com" }, // verified email
+            from: { email: "sduria@mgconsultingfirm.com" },
             to: [{ email: toEmail }],
             subject,
             content: message,
@@ -53,7 +52,6 @@ async function sendZohoEmail(toEmail: string, subject: string, message: string) 
 
   let result = await send(token);
 
-  // If token expired or permission issue, refresh once and retry
   if (
     result.status === 401 ||
     (result.data?.code === "NO_PERMISSION" && result.data?.message?.includes("permission"))
@@ -73,13 +71,32 @@ async function sendZohoEmail(toEmail: string, subject: string, message: string) 
   return result.data;
 }
 
-// 🧠 Extract name from transcript
-function extractName(transcript: string) {
-  const match = transcript?.match(/(?:my name is|this is|i am)\s+([A-Za-z ]+)/i);
-  return match ? match[1].trim() : "Unknown";
+// Extract structured details from transcript
+function extractDetails(transcript: string) {
+  const nameMatch = transcript.match(/(?:my name is|i am|this is)\s+([A-Za-z ]+)/i);
+  const emailMatch = transcript.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i);
+  const countryMatch = transcript.match(/country\s*[:\-]?\s*([A-Za-z ]+)/i);
+  const businessMatch = transcript.match(/business(?: is| name)?\s*[:\-]?\s*([A-Za-z0-9 &]+)/i);
+
+  return {
+    name: nameMatch ? nameMatch[1].trim() : "Unknown",
+    email: emailMatch ? emailMatch[0].trim() : null,
+    country: countryMatch ? countryMatch[1].trim() : null,
+    business: businessMatch ? businessMatch[1].trim() : null,
+  };
 }
 
-// 📩 Main webhook
+// Check if lead exists by email
+async function leadExists(email: string, token: string) {
+  if (!email) return false;
+  const resp = await fetch(`https://www.zohoapis.com/crm/v2/Leads/search?email=${email}`, {
+    headers: { Authorization: `Zoho-oauthtoken ${token}` },
+  });
+  const data = await resp.json();
+  return data.data?.length > 0;
+}
+
+// Main webhook
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -87,37 +104,47 @@ export async function POST(req: NextRequest) {
 
     const transcript = payload.call?.transcript || "";
     const summary = payload.call?.call_analysis?.call_summary || transcript;
-    const userName = extractName(transcript);
+    const details = extractDetails(transcript);
 
     const token = accessToken || (await refreshZohoToken());
     if (!token) return NextResponse.json({ error: "No Zoho token" }, { status: 500 });
 
-    // 🧾 Create Lead in Zoho CRM
-    const leadResp = await fetch("https://www.zohoapis.com/crm/v2/Leads", {
-      method: "POST",
-      headers: {
-        Authorization: `Zoho-oauthtoken ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        data: [
-          {
-            Last_Name: userName,
-            Company: "Retell Automation",
-            Description: summary,
-            Lead_Source: "Retell AI",
-          },
-        ],
-      }),
-    });
+    // Avoid duplicate leads
+    if (details.email && (await leadExists(details.email, token))) {
+      console.log("Lead already exists for email:", details.email);
+    } else {
+      // Create Lead
+      const leadResp = await fetch("https://www.zohoapis.com/crm/v2/Leads", {
+        method: "POST",
+        headers: {
+          Authorization: `Zoho-oauthtoken ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          data: [
+            {
+              Last_Name: details.name,
+              Company: details.business || "Retell Automation",
+              Description: summary,
+              Lead_Source: "Retell AI",
+              Email: details.email,
+              Country: details.country,
+            },
+          ],
+        }),
+      });
 
-    const leadData = await leadResp.json();
-    console.log("✅ Lead created:", leadData);
+      const leadData = await leadResp.json();
+      console.log("✅ Lead created:", leadData);
+    }
 
-    // 📤 Send transcript email
+    // Send transcript email
     const emailContent = `
       <h3>Retell Conversation Summary</h3>
-      <p><strong>Lead Name:</strong> ${userName}</p>
+      <p><strong>Lead Name:</strong> ${details.name}</p>
+      <p><strong>Email:</strong> ${details.email || "N/A"}</p>
+      <p><strong>Country:</strong> ${details.country || "N/A"}</p>
+      <p><strong>Business:</strong> ${details.business || "N/A"}</p>
       <p><strong>Summary:</strong> ${summary}</p>
       <pre style="background:#f9f9f9;padding:10px;">${transcript}</pre>
     `;
