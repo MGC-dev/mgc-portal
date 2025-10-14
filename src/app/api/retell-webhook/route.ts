@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 let accessToken: string | null = null;
 
-// Refresh Zoho token
+// 🔁 Refresh Zoho token
 async function refreshZohoToken() {
   const res = await fetch("https://accounts.zoho.com/oauth/v2/token", {
     method: "POST",
@@ -22,58 +22,88 @@ async function refreshZohoToken() {
   return accessToken;
 }
 
-// Send email via Zoho Mail API
+// ✉️ Send email via Zoho Mail API
 async function sendZohoEmail(toEmail: string, subject: string, message: string) {
-  const send = async (token: string) => {
-  const response = await fetch("https://www.zohoapis.com/crm/v2/Emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Zoho-oauthtoken ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      data: [
-        {
-          from: { email: "mgcentral@mgconsultingfirm.com" },
-          to: [{ email: toEmail }],
-          subject,
-          content: message,
-        },
-      ],
-    }),
-  });
-
-  const text = await response.text();
-  let data;
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch (err) {
-    console.error("Failed to parse Zoho response:", text);
-    data = { error: "Invalid JSON response", raw: text };
+  if (!toEmail) {
+    console.warn("No user email provided. Skipping email send.");
+    return;
   }
 
-  return { status: response.status, data };
-};
+  const send = async (token: string) => {
+    const response = await fetch("https://www.zohoapis.com/crm/v2/Emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Zoho-oauthtoken ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        data: [
+          {
+            from: { email: "mgcentral@mgconsultingfirm.com" }, // verified email
+            to: [{ email: toEmail }],
+            subject,
+            content: message,
+          },
+        ],
+      }),
+    });
 
+    const text = await response.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch (err) {
+      console.error("Failed to parse Zoho response:", text);
+      data = { error: "Invalid JSON response", raw: text };
+    }
+
+    return { status: response.status, data };
+  };
+
+  let token = accessToken || (await refreshZohoToken());
+  if (!token) throw new Error("Missing Zoho token");
+
+  let result = await send(token);
+
+  // Retry once if token expired or permission denied
+  if (
+    result.status === 401 ||
+    (result.data?.code === "NO_PERMISSION" && result.data?.message?.includes("permission"))
+  ) {
+    console.warn("Token expired or permission denied, refreshing token and retrying...");
+    token = await refreshZohoToken();
+    if (!token) throw new Error("Failed to refresh Zoho token");
+    result = await send(token);
+  }
+
+  if (result.data?.code && result.data?.code !== "SUCCESS") {
+    console.error("Failed to send email:", result.data);
+  } else {
+    console.log("Email sent successfully:", result.data);
+  }
+
+  return result.data;
 }
 
-// Check if lead exists by email
+// ✅ Check if lead exists by email
 async function leadExists(email: string, token: string) {
   if (!email) return false;
-  const resp = await fetch(`https://www.zohoapis.com/crm/v2/Leads/search?email=${email}`, {
+
+  const resp = await fetch(`https://www.zohoapis.com/crm/v2/Leads/search?email=${encodeURIComponent(email)}`, {
     headers: { Authorization: `Zoho-oauthtoken ${token}` },
   });
+
   const data = await resp.json();
   return data.data?.length > 0;
 }
 
-// Main webhook
+// 📩 Main webhook
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const payload = body.data || body;
 
-    // ✅ Use extracted variables from Retell AI flow
+    // 🧠 Extract structured variables from Retell
     const userName = payload.user_name || "Unknown";
     const userEmail = payload.user_email || null;
     const company = payload.company_name || "Retell Automation";
@@ -90,7 +120,7 @@ export async function POST(req: NextRequest) {
     const token = accessToken || (await refreshZohoToken());
     if (!token) return NextResponse.json({ error: "No Zoho token" }, { status: 500 });
 
-    // Avoid duplicate leads
+    // 🧾 Avoid duplicate leads
     if (userEmail && (await leadExists(userEmail, token))) {
       console.log("Lead already exists for email:", userEmail);
     } else {
@@ -119,7 +149,7 @@ export async function POST(req: NextRequest) {
       console.log("✅ Lead created:", leadData);
     }
 
-    // Send transcript email
+    // 📤 Send confirmation email
     const emailContent = `
       <h3>Retell Conversation Summary</h3>
       <p><strong>Name:</strong> ${userName}</p>
