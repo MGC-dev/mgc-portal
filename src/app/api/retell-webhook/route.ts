@@ -101,7 +101,15 @@ async function leadExists(email: string, token: string) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    console.log("💡 Incoming Retell payload:", JSON.stringify(body, null, 2));
+   console.log("💡 Incoming Retell payload:", JSON.stringify(req.body, null, 2));
+
+
+     const eventType = body.event;
+
+if (eventType !== "call_completed" && eventType !== "variables_extracted") {
+  console.log("Skipping event:", eventType);
+  return NextResponse.json({ success: true, message: "Event ignored" });
+}
     const payload = body.data || body;
 
     // 🧠 Extract structured variables from Retell
