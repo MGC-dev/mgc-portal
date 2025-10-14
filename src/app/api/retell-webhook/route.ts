@@ -24,30 +24,53 @@ async function refreshZohoToken() {
 
 // ✉️ Send email via Zoho Mail API
 async function sendZohoEmail(toEmail: string, subject: string, message: string) {
-  const token = accessToken || (await refreshZohoToken());
+  // Internal function to send email with a given token
+  const send = async (token: string) => {
+    const response = await fetch("https://www.zohoapis.com/crm/v2/Emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Zoho-oauthtoken ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        data: [
+          {
+            from: { email: "sduria@mgconsultingfirm.com" }, // verified email
+            to: [{ email: toEmail }],
+            subject,
+            content: message,
+          },
+        ],
+      }),
+    });
+
+    const data = await response.json();
+    return { status: response.status, data };
+  };
+
+  let token = accessToken || (await refreshZohoToken());
   if (!token) throw new Error("Missing Zoho token");
 
-  const response = await fetch("https://www.zohoapis.com/crm/v2/Emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Zoho-oauthtoken ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      data: [
-        {
-          from: { email: "sduria@mgconsultingfirm.com" },
-          to: [{ email: toEmail }],
-          subject,
-          content: message,
-        },
-      ],
-    }),
-  });
+  let result = await send(token);
 
-  const data = await response.json();
-  console.log("Email sent response:", data);
-  return data;
+  // If token expired or permission issue, refresh once and retry
+  if (
+    result.status === 401 ||
+    (result.data?.code === "NO_PERMISSION" && result.data?.message?.includes("permission"))
+  ) {
+    console.warn("Token expired or permission denied, refreshing token and retrying...");
+    token = await refreshZohoToken();
+    if (!token) throw new Error("Failed to refresh Zoho token");
+    result = await send(token);
+  }
+
+  if (result.data?.code && result.data?.code !== "SUCCESS") {
+    console.error("Failed to send email:", result.data);
+    throw new Error(result.data?.message || "Zoho email API error");
+  }
+
+  console.log("Email sent successfully:", result.data);
+  return result.data;
 }
 
 // 🧠 Extract name from transcript
