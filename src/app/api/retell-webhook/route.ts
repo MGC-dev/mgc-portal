@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 let accessToken: string | null = null;
 
@@ -18,6 +18,7 @@ async function refreshZohoToken() {
   const data = await res.json();
   if (data.access_token) accessToken = data.access_token;
   else console.error("Failed to refresh token", data);
+
   return accessToken;
 }
 
@@ -26,24 +27,25 @@ async function sendZohoEmail(toEmail: string, subject: string, message: string) 
   const token = accessToken || (await refreshZohoToken());
   if (!token) throw new Error("Missing Zoho token");
 
-  const emailData = {
-    fromAddress: "yourname@yourdomain.com", // Your verified Zoho Mail
-    toAddress: [toEmail],
-    subject,
-    content: message,
-    mailFormat: "html",
-  };
-
-  const res = await fetch("https://mail.zoho.com/api/accounts/<your-account-id>/messages", {
+  const response = await fetch("https://www.zohoapis.com/crm/v2/Emails", {
     method: "POST",
     headers: {
       Authorization: `Zoho-oauthtoken ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(emailData),
+    body: JSON.stringify({
+      data: [
+        {
+          from: { email: "sduria@mgconsultingfirm.com" },
+          to: [{ email: toEmail }],
+          subject,
+          content: message,
+        },
+      ],
+    }),
   });
 
-  const data = await res.json();
+  const data = await response.json();
   console.log("Email sent response:", data);
   return data;
 }
@@ -60,12 +62,12 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const payload = body.data || body;
 
-    const transcript = payload.call.transcript || "";
-    const summary = payload.call.call_analysis?.call_summary || transcript;
+    const transcript = payload.call?.transcript || "";
+    const summary = payload.call?.call_analysis?.call_summary || transcript;
     const userName = extractName(transcript);
 
     const token = accessToken || (await refreshZohoToken());
-    if (!token) return Response.json({ error: "No Zoho token" }, { status: 500 });
+    if (!token) return NextResponse.json({ error: "No Zoho token" }, { status: 500 });
 
     // 🧾 Create Lead in Zoho CRM
     const leadResp = await fetch("https://www.zohoapis.com/crm/v2/Leads", {
@@ -99,9 +101,9 @@ export async function POST(req: NextRequest) {
 
     await sendZohoEmail("aksuba7@gmail.com", "Retell Conversation Completed", emailContent);
 
-    return Response.json({ success: true, message: "Lead added and email sent" });
+    return NextResponse.json({ success: true, message: "Lead added and email sent" });
   } catch (err) {
     console.error("Webhook error:", err);
-    return Response.json({ error: "Internal error" }, { status: 500 });
+    return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }
