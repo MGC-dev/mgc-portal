@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 let accessToken: string | null = null;
 
-// Refresh Zoho token
+/* 🔄 Refresh Zoho Token */
 async function refreshZohoToken() {
   const res = await fetch("https://accounts.zoho.com/oauth/v2/token", {
     method: "POST",
@@ -17,21 +17,16 @@ async function refreshZohoToken() {
 
   const data = await res.json();
   if (data.access_token) accessToken = data.access_token;
-  else console.error("Failed to refresh token", data);
+  else console.error("❌ Failed to refresh token", data);
 
   return accessToken;
 }
 
-// Send email via Zoho Mail API
+/* 📧 Send Email via Zoho Mail */
 async function sendZohoEmail(toEmail: string | null, subject: string, message: string) {
-  if (!toEmail) {
-    console.warn("No user email provided. Skipping email send.");
-    return;
-  }
+  if (!toEmail) return;
 
   const token = accessToken || (await refreshZohoToken());
-  if (!token) throw new Error("Missing Zoho token");
-
   const res = await fetch("https://www.zohoapis.com/crm/v2/Emails", {
     method: "POST",
     headers: {
@@ -41,7 +36,7 @@ async function sendZohoEmail(toEmail: string | null, subject: string, message: s
     body: JSON.stringify({
       data: [
         {
-          from: { email: "mgcentral@mgconsultingfirm.com" }, // verified Zoho email
+          from: { email: "mgcentral@mgconsultingfirm.com" },
           to: [{ email: toEmail }],
           subject,
           content: message,
@@ -52,14 +47,14 @@ async function sendZohoEmail(toEmail: string | null, subject: string, message: s
 
   const text = await res.text();
   try {
-    return text ? JSON.parse(text) : {};
-  } catch (err) {
-    console.error("Failed to parse Zoho response:", text);
-    return { error: "Invalid JSON response", raw: text };
+    return JSON.parse(text);
+  } catch {
+    console.error("⚠️ Invalid Zoho response:", text);
+    return { error: "Invalid JSON", raw: text };
   }
 }
 
-// Check if lead exists by email
+/* 🔍 Check if lead already exists */
 async function leadExists(email: string, token: string) {
   if (!email) return false;
   const resp = await fetch(`https://www.zohoapis.com/crm/v2/Leads/search?email=${email}`, {
@@ -69,54 +64,59 @@ async function leadExists(email: string, token: string) {
   return data.data?.length > 0;
 }
 
-// Extract variables from transcript
+/* 🧠 Extract details from transcript */
 function extractFromTranscript(transcript: string) {
-  const userNameMatch = transcript.match(/my name is ([A-Za-z ]+)/i);
+  const nameMatch = transcript.match(/(?:my name is|I’m|this is)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)/i);
   const emailMatch = transcript.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-  const locationMatch = transcript.match(/located in ([A-Za-z, ]+)/i);
-  const companyMatch = transcript.match(/company is ([A-Za-z0-9 &]+)/i);
-  const industryMatch = transcript.match(/industry is ([A-Za-z]+)/i);
+  const companyMatch = transcript.match(/(?:company|organization|business)\s+(?:is|called)\s+([A-Za-z0-9 &]+)/i);
+  const industryMatch = transcript.match(/(?:industry|sector)\s+(?:is|in)\s+([A-Za-z]+)/i);
+  const locationMatch = transcript.match(/(?:located|based)\s+(?:in)\s+([A-Za-z, ]+)/i);
 
   return {
-    userName: userNameMatch ? userNameMatch[1].trim() : "Unknown",
-    userEmail: emailMatch ? emailMatch[0] : null,
-    company: companyMatch ? companyMatch[1].trim() : "Retell Automation",
-    industry: industryMatch ? industryMatch[1].trim() : "",
-    location: locationMatch ? locationMatch[1].trim() : "",
+    user_name: nameMatch?.[1]?.trim() || "Unknown",
+    user_email: emailMatch?.[0]?.toLowerCase() || null,
+    company_name: companyMatch?.[1]?.trim() || "",
+    industry: industryMatch?.[1]?.trim() || "",
+    location: locationMatch?.[1]?.trim() || "",
   };
 }
 
-// Main webhook
+/* 🚀 Main Webhook Handler */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const payload = body.data || body;
 
-    // Try variables first, fallback to transcript
-    let userName = payload.user_name;
-    let userEmail = payload.user_email;
-    let company = payload.company_name;
-    let industry = payload.industry;
-    let location = payload.location;
+    // ✅ Normalize payload (Retell structure)
+    const metadata = body.metadata || {};
+    const vars = metadata.variables || {};
+    const transcript = body.transcript || body.call?.transcript || "";
 
-    if (!userName || !userEmail) {
-      const transcript = payload.call?.transcript || "";
+    // Extract from variables (Retell dynamic variables)
+    let userName = vars.user_name || null;
+    let userEmail = vars.user_email || null;
+    let company = vars.company_name || null;
+    let industry = vars.industry || null;
+    let location = vars.location || null;
+
+    // Fallback to regex-based extraction
+    if (!userEmail || !userName) {
       const extracted = extractFromTranscript(transcript);
-      userName = userName || extracted.userName;
-      userEmail = userEmail || extracted.userEmail;
-      company = company || extracted.company;
-      industry = industry || extracted.industry;
-      location = location || extracted.location;
+      userName ||= extracted.user_name;
+      userEmail ||= extracted.user_email;
+      company ||= extracted.company_name;
+      industry ||= extracted.industry;
+      location ||= extracted.location;
     }
 
+    // 🪪 Refresh token
     const token = accessToken || (await refreshZohoToken());
     if (!token) return NextResponse.json({ error: "No Zoho token" }, { status: 500 });
 
-    // Avoid duplicate leads
+    // 🔁 Avoid duplicate lead
     if (userEmail && (await leadExists(userEmail, token))) {
-      console.log("Lead already exists for email:", userEmail);
+      console.log(`ℹ️ Lead already exists: ${userEmail}`);
     } else {
-      const leadResp = await fetch("https://www.zohoapis.com/crm/v2/Leads", {
+      const leadRes = await fetch("https://www.zohoapis.com/crm/v2/Leads", {
         method: "POST",
         headers: {
           Authorization: `Zoho-oauthtoken ${token}`,
@@ -125,36 +125,39 @@ export async function POST(req: NextRequest) {
         body: JSON.stringify({
           data: [
             {
-              Last_Name: userName,
-              Company: company,
-              Description: `Industry: ${industry}\nLocation: ${location}`,
+              Last_Name: userName || "Unknown",
+              Company: company || "Retell Lead",
+              Email: userEmail || "",
               Lead_Source: "Retell AI",
-              Email: userEmail,
-              Country: location,
+              Description: `Industry: ${industry}\nLocation: ${location}\n\nFull Transcript:\n${transcript}`,
+              Country: location || "",
             },
           ],
         }),
       });
 
-      const leadData = await leadResp.json();
-      console.log("✅ Lead created:", leadData);
+      const data = await leadRes.json();
+      console.log("✅ Lead created:", data);
     }
 
-    // Send email
-    const emailContent = `
-      <h3>Retell Conversation Summary</h3>
-      <p><strong>Name:</strong> ${userName}</p>
-      <p><strong>Email:</strong> ${userEmail || "N/A"}</p>
-      <p><strong>Company:</strong> ${company}</p>
-      <p><strong>Industry:</strong> ${industry}</p>
-      <p><strong>Location:</strong> ${location}</p>
+    // 📧 Send summary email
+    const summary = `
+      <h3>🗒 Retell AI Conversation Summary</h3>
+      <p><b>Name:</b> ${userName}</p>
+      <p><b>Email:</b> ${userEmail}</p>
+      <p><b>Company:</b> ${company}</p>
+      <p><b>Industry:</b> ${industry}</p>
+      <p><b>Location:</b> ${location}</p>
+      <hr />
+      <p><b>Full Transcript:</b></p>
+      <pre>${transcript}</pre>
     `;
 
-    await sendZohoEmail(userEmail, "Retell Conversation Completed", emailContent);
+    await sendZohoEmail(userEmail, "Retell AI Conversation Summary", summary);
 
-    return NextResponse.json({ success: true, message: "Lead added and email sent" });
+    return NextResponse.json({ success: true, message: "Lead created & email sent" });
   } catch (err) {
-    console.error("Webhook error:", err);
-    return NextResponse.json({ error: "Internal error" }, { status: 500 });
+    console.error("❌ Webhook error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
