@@ -159,14 +159,17 @@ function extractUserDataFromTranscriptObject(payload: any) {
       /name[:\-]?\s*([a-z\s]+)/i,
       /your name is\s+([a-z\s]+)/i,
       /name is\s+([a-z\s]+)/i,
+      /name as\s+([a-z\s]+)/i,
       /this is\s+([a-z\s]+)/i
     ],
     email: [
       /email[:\-]?\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i,
-      /email is\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i
+      /email is\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i,
+      /email as\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i
     ],
     company: [
       /company[:\-]?\s*([a-z0-9 &]+)/i,
+      /company is\s*([a-z0-9 &]+)/i,
       /company name is\s*([a-z0-9 &]+)/i,
       /organization is\s*([a-z0-9 &]+)/i,
       /business is\s*([a-z0-9 &]+)/i
