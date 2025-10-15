@@ -128,64 +128,99 @@ async function createLead(payload: {
 }
 
 // --- Enhanced extraction from Retell transcript object ---
+// --- Enhanced extraction from Retell transcript object (robust/flexible) ---
 function extractUserDataFromTranscriptObject(payload: any) {
   const result: any = { name: null, email: null, company: null, location: null, industry: null };
 
-  // const transcriptArray =
-  //   payload?.call?.transcript_object ||
-  //   payload?.transcript_object ||
-  //   payload?.call?.conversation ||
-  //   payload?.conversation ||
-  //   payload?.call?.transcripts ||
-  //   [];
-    const transcriptArray =
-      payload?.call?.transcript_object ||
-      payload?.call?.conversation ||
-      payload?.call?.call_analysis?.conversation ||
-      payload?.call?.call_analysis?.messages ||
-      payload?.call?.analysis?.conversation ||
-      [];
+  // Try several possible transcript arrays
+  const transcriptArray =
+    payload?.call?.transcript_object ||
+    payload?.call?.conversation ||
+    payload?.call?.call_analysis?.conversation ||
+    payload?.call?.call_analysis?.messages ||
+    payload?.call?.analysis?.conversation ||
+    [];
+
   if (!Array.isArray(transcriptArray) || transcriptArray.length === 0) {
     console.warn("⚠️ No transcript array found in payload");
     return result;
   }
 
-  // Join last few agent messages to extract confirmed info
-  const lastAgentMessages = transcriptArray
-    .filter(t => t.role?.toLowerCase?.() === "agent" && typeof t.content === "string")
-    .slice(-3) // last few lines usually have confirmation
+  // Combine all agent and user messages into a single text block
+  const fullText = transcriptArray
+    .filter(t => typeof t.content === "string")
     .map(t => t.content)
-    .join(" ");
+    .join(" ")
+    .toLowerCase();
 
-  const fullText = lastAgentMessages.toLowerCase();
+  // --- Flexible patterns per field ---
+  const patterns = {
+    name: [
+      /name[:\-]?\s*([a-z\s]+)/i,
+      /your name is\s+([a-z\s]+)/i,
+      /name is\s+([a-z\s]+)/i,
+      /this is\s+([a-z\s]+)/i
+    ],
+    email: [
+      /email[:\-]?\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i,
+      /email is\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i
+    ],
+    company: [
+      /company[:\-]?\s*([a-z0-9 &]+)/i,
+      /company name is\s*([a-z0-9 &]+)/i,
+      /organization is\s*([a-z0-9 &]+)/i,
+      /business is\s*([a-z0-9 &]+)/i
+    ],
+    location: [
+      /location[:\-]?\s*([a-z, ]+)/i,
+      /located in\s*([a-z, ]+)/i,
+      /based in\s*([a-z, ]+)/i
+    ],
+    industry: [
+      /industry[:\-]?\s*([a-z0-9 &]+)/i,
+      /sector is\s*([a-z0-9 &]+)/i
+    ]
+  };
 
-  // --- Extract using relaxed patterns ---
-  const nameMatch = fullText.match(/name[:\-]?\s*([a-z\s]+)/i);
-  const emailMatch = fullText.match(/email[:\-]?\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i);
-  const companyMatch = fullText.match(/company[:\-]?\s*([a-z0-9 &]+)/i);
-  const industryMatch = fullText.match(/industry[:\-]?\s*([a-z0-9 &]+)/i);
-  const locationMatch = fullText.match(/location[:\-]?\s*([a-z, ]+)/i);
+  // Function to match patterns
+  function matchPatterns(arr: RegExp[]) {
+    for (const p of arr) {
+      const m = fullText.match(p);
+      if (m) return m[1].trim();
+    }
+    return null;
+  }
 
-  if (nameMatch) result.name = nameMatch[1].trim();
-  if (emailMatch) result.email = emailMatch[1].trim();
-  if (companyMatch) result.company = companyMatch[1].trim();
-  if (industryMatch) result.industry = industryMatch[1].trim();
-  if (locationMatch) result.location = locationMatch[1].trim();
+  result.name = matchPatterns(patterns.name);
+  result.email = matchPatterns(patterns.email);
+  result.company = matchPatterns(patterns.company);
+  result.location = matchPatterns(patterns.location);
+  result.industry = matchPatterns(patterns.industry);
 
-  // --- Fallback: also check user lines ---
-  if (!result.email || !result.name) {
-    for (const entry of transcriptArray) {
-      const role = entry.role?.toLowerCase?.() || "";
-      const text = (entry.content || "").toLowerCase();
-      if (role === "user") {
-        if (!result.name) {
-          const nm = text.match(/(?:my name is|i am|this is)\s+([a-z\s]+)/i);
-          if (nm) result.name = nm[1].trim();
-        }
-        if (!result.email) {
-          const em = text.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
-          if (em) result.email = em[0].toLowerCase();
-        }
+  // --- Fallback: scan user lines if missing ---
+  for (const entry of transcriptArray) {
+    const role = entry.role?.toLowerCase?.() || "";
+    const text = (entry.content || "").toLowerCase();
+    if (role === "user") {
+      if (!result.name) {
+        const nm = text.match(/(?:my name is|i am|this is)\s+([a-z\s]+)/i);
+        if (nm) result.name = nm[1].trim();
+      }
+      if (!result.email) {
+        const em = text.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
+        if (em) result.email = em[0].toLowerCase();
+      }
+      if (!result.company) {
+        const cm = text.match(/(?:company|organization|business)\s+(?:is|called)\s+([a-z0-9 &]+)/i);
+        if (cm) result.company = cm[1].trim();
+      }
+      if (!result.location) {
+        const lm = text.match(/(?:located|based)\s+(?:in|at)\s+([a-z0-9, ]+)/i);
+        if (lm) result.location = lm[1].trim();
+      }
+      if (!result.industry) {
+        const im = text.match(/(?:industry|sector)\s+(?:is|in)\s+([a-z0-9 &]+)/i);
+        if (im) result.industry = im[1].trim();
       }
     }
   }
