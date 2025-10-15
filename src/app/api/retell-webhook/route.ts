@@ -104,6 +104,7 @@ async function createLead(payload: {
   country?: string;
   callId?: string;
 }, token: string) {
+  
   const leadObj: any = {
     Last_Name: payload.lastName || "Unknown",
     Company: payload.company || "Retell Lead",
@@ -128,58 +129,70 @@ async function createLead(payload: {
 
 // --- Enhanced extraction from Retell transcript object ---
 function extractUserDataFromTranscriptObject(payload: any) {
-  const userData: any = { name: null, email: null, company: null, location: null, industry: null };
+  const result: any = { name: null, email: null, company: null, location: null, industry: null };
 
-  // Support multiple possible keys: transcript_object, conversation, transcriptItems
-  const transcriptArray =
-    payload?.call?.transcript_object ||
-    payload?.transcript_object ||
-    payload?.call?.conversation ||
-    payload?.conversation ||
-    payload?.call?.transcripts ||
-    [];
-
+  // const transcriptArray =
+  //   payload?.call?.transcript_object ||
+  //   payload?.transcript_object ||
+  //   payload?.call?.conversation ||
+  //   payload?.conversation ||
+  //   payload?.call?.transcripts ||
+  //   [];
+    const transcriptArray =
+      payload?.call?.transcript_object ||
+      payload?.call?.conversation ||
+      payload?.call?.call_analysis?.conversation ||
+      payload?.call?.call_analysis?.messages ||
+      payload?.call?.analysis?.conversation ||
+      [];
   if (!Array.isArray(transcriptArray) || transcriptArray.length === 0) {
-    console.warn("No transcript array found in payload");
-    return userData;
+    console.warn("⚠️ No transcript array found in payload");
+    return result;
   }
 
-  for (let i = 0; i < transcriptArray.length; i++) {
-    const entry = transcriptArray[i];
-    const role = entry.role?.toLowerCase?.() || entry.speaker?.toLowerCase?.() || "";
-    const text = (entry.content || entry.message || entry.text || "").toLowerCase();
-    const next = transcriptArray[i + 1];
+  // Join last few agent messages to extract confirmed info
+  const lastAgentMessages = transcriptArray
+    .filter(t => t.role?.toLowerCase?.() === "agent" && typeof t.content === "string")
+    .slice(-3) // last few lines usually have confirmation
+    .map(t => t.content)
+    .join(" ");
 
-    if (role === "user") {
-      // --- Name ---
-      const nameMatch = text.match(/(?:my name is|i am|this is)\s+([a-z\s]+)/i);
-      if (nameMatch && !userData.name) userData.name = nameMatch[1].trim();
+  const fullText = lastAgentMessages.toLowerCase();
 
-      // --- Email ---
-      const emailMatch = text.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
-      if (emailMatch && !userData.email) userData.email = emailMatch[0].toLowerCase();
-      // If user mispronounced and agent corrected next
-      else if (!userData.email && next?.role?.toLowerCase?.() === "agent") {
-        const corrected = (next.content || next.message || "").match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
-        if (corrected) userData.email = corrected[0].toLowerCase();
+  // --- Extract using relaxed patterns ---
+  const nameMatch = fullText.match(/name[:\-]?\s*([a-z\s]+)/i);
+  const emailMatch = fullText.match(/email[:\-]?\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i);
+  const companyMatch = fullText.match(/company[:\-]?\s*([a-z0-9 &]+)/i);
+  const industryMatch = fullText.match(/industry[:\-]?\s*([a-z0-9 &]+)/i);
+  const locationMatch = fullText.match(/location[:\-]?\s*([a-z, ]+)/i);
+
+  if (nameMatch) result.name = nameMatch[1].trim();
+  if (emailMatch) result.email = emailMatch[1].trim();
+  if (companyMatch) result.company = companyMatch[1].trim();
+  if (industryMatch) result.industry = industryMatch[1].trim();
+  if (locationMatch) result.location = locationMatch[1].trim();
+
+  // --- Fallback: also check user lines ---
+  if (!result.email || !result.name) {
+    for (const entry of transcriptArray) {
+      const role = entry.role?.toLowerCase?.() || "";
+      const text = (entry.content || "").toLowerCase();
+      if (role === "user") {
+        if (!result.name) {
+          const nm = text.match(/(?:my name is|i am|this is)\s+([a-z\s]+)/i);
+          if (nm) result.name = nm[1].trim();
+        }
+        if (!result.email) {
+          const em = text.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
+          if (em) result.email = em[0].toLowerCase();
+        }
       }
-
-      // --- Company ---
-      const companyMatch = text.match(/(?:company|organization|business)\s+(?:is|called)?\s*([a-z0-9 &]+)/i);
-      if (companyMatch && !userData.company) userData.company = companyMatch[1].trim();
-
-      // --- Location ---
-      const locMatch = text.match(/(?:from|based|located)\s+(?:in|at)?\s*([a-z, ]+)/i);
-      if (locMatch && !userData.location) userData.location = locMatch[1].trim();
-
-      // --- Industry ---
-      const industryMatch = text.match(/(?:industry|sector)\s+(?:is|in)?\s*([a-z &]+)/i);
-      if (industryMatch && !userData.industry) userData.industry = industryMatch[1].trim();
     }
   }
 
-  return userData;
+  return result;
 }
+
 
 
 
@@ -269,7 +282,7 @@ export async function POST(req: NextRequest) {
       industry = industry || extracted.industry || null;
       location = location || extracted.location || null;
     }
-
+    console.log("Extracted data:", structuredData);
     // Refresh token
     const token = accessToken || (await refreshZohoToken());
     if (!token) {
@@ -296,6 +309,11 @@ export async function POST(req: NextRequest) {
       } else {
         // create lead and attach callId (if available)
         const description = `Industry: ${industry || ""}\nLocation: ${location || ""}\n\nTranscript:\n${transcript}`;
+        if (!callId && !userEmail) {
+          console.warn("Skipping lead creation: no callId or email.");
+          return NextResponse.json({ success: true, message: "Skipped (no unique key)" });
+        }
+
         const leadResp = await createLead(
           {
             lastName: userName || "Unknown",
@@ -342,6 +360,8 @@ export async function POST(req: NextRequest) {
       <p><b>Company:</b> ${company || "N/A"}</p>
       <p><b>Industry:</b> ${industry || "N/A"}</p>
       <p><b>Location:</b> ${location || "N/A"}</p>
+      <p><b>Agent:</b> ${body.call?.agent_name || "N/A"}</p>
+      <p><b>Duration:</b> ${body.call?.duration_seconds || "N/A"} seconds</p>
       <hr />
       <pre>${transcript}</pre>
     `;
