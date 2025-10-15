@@ -126,6 +126,63 @@ async function createLead(payload: {
   return safeJson(res);
 }
 
+// --- Enhanced extraction from Retell transcript object ---
+function extractUserDataFromTranscriptObject(payload: any) {
+  const userData: any = { name: null, email: null, company: null, location: null, industry: null };
+
+  // Support multiple possible keys: transcript_object, conversation, transcriptItems
+  const transcriptArray =
+    payload?.call?.transcript_object ||
+    payload?.transcript_object ||
+    payload?.call?.conversation ||
+    payload?.conversation ||
+    payload?.call?.transcripts ||
+    [];
+
+  if (!Array.isArray(transcriptArray) || transcriptArray.length === 0) {
+    console.warn("No transcript array found in payload");
+    return userData;
+  }
+
+  for (let i = 0; i < transcriptArray.length; i++) {
+    const entry = transcriptArray[i];
+    const role = entry.role?.toLowerCase?.() || entry.speaker?.toLowerCase?.() || "";
+    const text = (entry.content || entry.message || entry.text || "").toLowerCase();
+    const next = transcriptArray[i + 1];
+
+    if (role === "user") {
+      // --- Name ---
+      const nameMatch = text.match(/(?:my name is|i am|this is)\s+([a-z\s]+)/i);
+      if (nameMatch && !userData.name) userData.name = nameMatch[1].trim();
+
+      // --- Email ---
+      const emailMatch = text.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
+      if (emailMatch && !userData.email) userData.email = emailMatch[0].toLowerCase();
+      // If user mispronounced and agent corrected next
+      else if (!userData.email && next?.role?.toLowerCase?.() === "agent") {
+        const corrected = (next.content || next.message || "").match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
+        if (corrected) userData.email = corrected[0].toLowerCase();
+      }
+
+      // --- Company ---
+      const companyMatch = text.match(/(?:company|organization|business)\s+(?:is|called)?\s*([a-z0-9 &]+)/i);
+      if (companyMatch && !userData.company) userData.company = companyMatch[1].trim();
+
+      // --- Location ---
+      const locMatch = text.match(/(?:from|based|located)\s+(?:in|at)?\s*([a-z, ]+)/i);
+      if (locMatch && !userData.location) userData.location = locMatch[1].trim();
+
+      // --- Industry ---
+      const industryMatch = text.match(/(?:industry|sector)\s+(?:is|in)?\s*([a-z &]+)/i);
+      if (industryMatch && !userData.industry) userData.industry = industryMatch[1].trim();
+    }
+  }
+
+  return userData;
+}
+
+
+
 // Fallback extraction from transcript (extend patterns if needed)
 function extractFromTranscript(transcript = "") {
   const t = transcript || "";
@@ -168,6 +225,10 @@ export async function POST(req: NextRequest) {
       (body.call && body.call.transcripts ? body.call.transcripts.join("\n") : "") ||
       "";
 
+          // If structured transcript_object exists, extract user-focused data
+    const structuredData = extractUserDataFromTranscriptObject(body);
+
+
     // Try extracted variables in several likely locations
     const variables =
       body.variables ||
@@ -188,11 +249,17 @@ export async function POST(req: NextRequest) {
     }
 
     // Build candidate fields from variables first, fallback to transcript extraction
-    let userName = variables.user_name || variables.userName || variables.name || null;
-    let userEmail = variables.user_email || variables.userEmail || variables.email || null;
-    let company = variables.company_name || variables.company || null;
-    let industry = variables.industry || null;
-    let location = variables.location || variables.city || null;
+    // let userName = variables.user_name || variables.userName || variables.name || null;
+    // let userEmail = variables.user_email || variables.userEmail || variables.email || null;
+    // let company = variables.company_name || variables.company || null;
+    // let industry = variables.industry || null;
+    // let location = variables.location || variables.city || null;
+
+   let userName = structuredData?.name || variables.user_name || variables.name || null;
+    let userEmail = structuredData?.email || variables.user_email || variables.email || null;
+    let company = structuredData?.company || variables.company_name || variables.company || null;
+    let location = structuredData?.location || variables.city || null;
+    let industry = structuredData?.industry || variables.industry || null;
 
     if (!userName || !userEmail) {
       const extracted = extractFromTranscript(transcript);
