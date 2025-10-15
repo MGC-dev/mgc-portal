@@ -156,7 +156,7 @@ function extractUserDataFromTranscriptObject(payload: any) {
   // --- Flexible patterns per field ---
   const patterns = {
     name: [
-      /name[:\-]?\s*([a-z\s]+)/i,
+      
       /your name is\s+([a-z\s]+)/i,
       /name is\s+([a-z\s]+)/i,
       /Name:\s+([a-z\s]+)/i,
@@ -263,137 +263,87 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     console.log("Incoming Retell payload:", JSON.stringify(body));
 
-    // If the payload is empty at all — skip
+    // Ignore empty payloads
     if (!body || Object.keys(body).length === 0) {
-      console.log("Empty payload - skipping");
       return NextResponse.json({ success: true, message: "Empty payload ignored" });
     }
 
-    // Normalize: try a few common places Retell may put content
-    // callId: body.call_id || body.call?.call_id || body.call?.id
-    const callId = body.call_id || body.call?.call_id || body.call?.id || body.call?.id;
     const event = body.event || body.status || null;
 
-    // prefer transcript from top-level / body.call.transcript / body.transcript
+    // Only process after conversation is over
+    if (!["call_completed", "call_analyzed"].includes(event)) {
+      console.log(`Event "${event}" ignored - only processing after conversation ends.`);
+      return NextResponse.json({ success: true, message: `Event "${event}" ignored` });
+    }
+
+    const callId = body.call_id || body.call?.call_id || body.call?.id;
+    type TranscriptEntry = {
+        role?: string;
+        content?: string;
+      };
+    // Prefer transcript arrays from the end of the conversation
+    const transcriptArray =
+      body.call?.transcript_object ||
+      body.call?.conversation ||
+      body.call?.call_analysis?.conversation ||
+      body.call?.call_analysis?.messages ||
+      [];
+
+    if (!Array.isArray(transcriptArray) || transcriptArray.length === 0) {
+      console.warn("⚠️ No transcript array found in payload");
+    }
+
+    // Extract user data only from the last few messages (agent + user confirmations)
+    const structuredData = extractUserDataFromTranscriptObject({ call: { transcript_object: transcriptArray } });
+
+    // Also fallback to plain transcript if needed
     const transcript =
       (typeof body.transcript === "string" && body.transcript) ||
       body.call?.transcript ||
-      (body.call && body.call.transcripts ? body.call.transcripts.join("\n") : "") ||
-      "";
+      (transcriptArray.length ? transcriptArray.map((t: TranscriptEntry) => t.content || "").join("\n") : "");
 
-          // If structured transcript_object exists, extract user-focused data
-    const structuredData = extractUserDataFromTranscriptObject(body);
+    // Extract final user info
+    let userName = structuredData?.name || "Unknown";
+    let userEmail = structuredData?.email || null;
+    let company = structuredData?.company || null;
+    let location = structuredData?.location || null;
+    let industry = structuredData?.industry || null;
 
+    console.log("Final extracted data (end of conversation):", { userName, userEmail, company, location, industry });
 
-    // Try extracted variables in several likely locations
-    const variables =
-      body.variables ||
-      body.metadata?.variables ||
-      body.data?.variables ||
-      body.call?.call_analysis?.variables ||
-      body.call?.analysis?.variables ||
-      {};
-
-    // We only want to process final/analyzed events (avoid call_started)
-    // If Retell sends only call_completed/call_analyzed event, you may check event === 'call_analyzed' or 'call_completed'
-    // But to be safe, if variables/transcript exist we proceed; else skip.
-    const hasData = Object.keys(variables || {}).length > 0 || transcript.trim().length > 0;
-
-    if (!hasData) {
-      console.log("No transcript/variables in payload - skipping");
-      return NextResponse.json({ success: true, message: "No content to process" });
-    }
-
-    // Build candidate fields from variables first, fallback to transcript extraction
-    // let userName = variables.user_name || variables.userName || variables.name || null;
-    // let userEmail = variables.user_email || variables.userEmail || variables.email || null;
-    // let company = variables.company_name || variables.company || null;
-    // let industry = variables.industry || null;
-    // let location = variables.location || variables.city || null;
-
-   let userName = structuredData?.name || variables.user_name || variables.name || null;
-    let userEmail = structuredData?.email || variables.user_email || variables.email || null;
-    let company = structuredData?.company || variables.company_name || variables.company || null;
-    let location = structuredData?.location || variables.city || null;
-    let industry = structuredData?.industry || variables.industry || null;
-
-    if (!userName || !userEmail) {
-      const extracted = extractFromTranscript(transcript);
-      userName = userName || extracted.userName || "Unknown";
-      userEmail = userEmail || extracted.userEmail || null;
-      company = company || extracted.company || null;
-      industry = industry || extracted.industry || null;
-      location = location || extracted.location || null;
-    }
-    console.log("Extracted data:", structuredData);
     // Refresh token
     const token = accessToken || (await refreshZohoToken());
-    if (!token) {
-      console.error("No Zoho token available");
-      return NextResponse.json({ error: "No Zoho token" }, { status: 500 });
-    }
+    if (!token) return NextResponse.json({ error: "No Zoho token" }, { status: 500 });
 
     // --- Idempotency checks ---
-    // 1) If callId present and a lead with that call id exists, skip.
     if (callId) {
       const existsByCall = await leadExistsByCallId(callId, token);
       if (existsByCall) {
-        console.log("Lead already exists for callId:", callId, " — skipping creation");
-        // still optionally send email to admin if needed
         return NextResponse.json({ success: true, message: "Already processed (call id)" });
       }
     }
 
-    // 2) If email exists and lead exists by email, skip creating new lead (but update could be done)
-    if (userEmail) {
-      const existsByEmail = await leadExistsByEmail(userEmail, token);
-      if (existsByEmail) {
-        console.log("Lead already exists for email:", userEmail, " — skipping creation");
-      } else {
-        // create lead and attach callId (if available)
-        const description = `Industry: ${industry || ""}\nLocation: ${location || ""}\n\nTranscript:\n${transcript}`;
-        if (!callId && !userEmail) {
-          console.warn("Skipping lead creation: no callId or email.");
-          return NextResponse.json({ success: true, message: "Skipped (no unique key)" });
-        }
-
-        const leadResp = await createLead(
-          {
-            lastName: userName || "Unknown",
-            company,
-            email: userEmail,
-            description,
-            country: location,
-            callId,
-          },
-          token
-        );
-        console.log("Lead create response:", JSON.stringify(leadResp));
-      }
-    } else {
-      // No email provided — still attempt to dedupe using callId (already checked above).
-      if (!callId) {
-        // We have neither email nor callId — do not create duplicate leads for safety.
-        console.warn("No email and no callId — skipping lead creation to avoid duplicates.");
-      } else {
-        // create lead tied to callId
-        const description = `Industry: ${industry || ""}\nLocation: ${location || ""}\n\nTranscript:\n${transcript}`;
-        const leadResp = await createLead(
-          {
-            lastName: userName || "Unknown",
-            company,
-            email: null,
-            description,
-            country: location,
-            callId,
-          },
-          token
-        );
-        console.log("Lead create response (callId only):", JSON.stringify(leadResp));
-      }
+    if (!userEmail && !callId) {
+      console.warn("No email or callId - skipping lead creation.");
+      return NextResponse.json({ success: true, message: "Skipped (no unique key)" });
     }
 
-    // Send summary email to admin and (optionally) to user if email present
+    // Create lead only at the end
+    const description = `Industry: ${industry || ""}\nLocation: ${location || ""}\n\nTranscript:\n${transcript}`;
+    const leadResp = await createLead(
+      {
+        lastName: userName,
+        company,
+        email: userEmail,
+        description,
+        country: location,
+        callId,
+      },
+      token
+    );
+    console.log("Lead create response:", JSON.stringify(leadResp));
+
+    // Send email only after conversation ends
     const adminEmail = process.env.NOTIFY_EMAIL || "aksuba7@gmail.com";
     const summaryHtml = `
       <h3>Retell Call Summary</h3>
@@ -408,16 +358,8 @@ export async function POST(req: NextRequest) {
       <hr />
       <pre>${transcript}</pre>
     `;
-    // admin
-    await sendZohoEmail(adminEmail, `Retell Call ${callId || ""} Summary`, summaryHtml).catch((e) =>
-      console.error("Error sending admin email:", e)
-    );
-    // user (optional)
-    if (userEmail) {
-      await sendZohoEmail(userEmail, "Thanks — we received your intake", summaryHtml).catch((e) =>
-        console.error("Error sending user email:", e)
-      );
-    }
+    await sendZohoEmail(adminEmail, `Retell Call ${callId || ""} Summary`, summaryHtml);
+    if (userEmail) await sendZohoEmail(userEmail, "Thanks — we received your intake", summaryHtml);
 
     return NextResponse.json({ success: true });
   } catch (err) {
