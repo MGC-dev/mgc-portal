@@ -159,17 +159,20 @@ function extractUserDataFromTranscriptObject(payload: any) {
       /name[:\-]?\s*([a-z\s]+)/i,
       /your name is\s+([a-z\s]+)/i,
       /name is\s+([a-z\s]+)/i,
+      /Name:\s+([a-z\s]+)/i,
       /name as\s+([a-z\s]+)/i,
       /this is\s+([a-z\s]+)/i
     ],
     email: [
       /email[:\-]?\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i,
+      /Email:\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i,
       /email is\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i,
       /email as\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i
     ],
     company: [
       /company[:\-]?\s*([a-z0-9 &]+)/i,
       /company is\s*([a-z0-9 &]+)/i,
+      /Company:\s*([a-z0-9 &]+)/i,
       /company name is\s*([a-z0-9 &]+)/i,
       /organization is\s*([a-z0-9 &]+)/i,
       /business is\s*([a-z0-9 &]+)/i
@@ -177,10 +180,12 @@ function extractUserDataFromTranscriptObject(payload: any) {
     location: [
       /location[:\-]?\s*([a-z, ]+)/i,
       /located in\s*([a-z, ]+)/i,
+      /Location:\s*([a-z, ]+)/i,
       /based in\s*([a-z, ]+)/i
     ],
     industry: [
       /industry[:\-]?\s*([a-z0-9 &]+)/i,
+      /Industry:\s*([a-z0-9 &]+)/i,
       /sector is\s*([a-z0-9 &]+)/i
     ]
   };
@@ -206,7 +211,7 @@ function extractUserDataFromTranscriptObject(payload: any) {
     const text = (entry.content || "").toLowerCase();
     if (role === "user") {
       if (!result.name) {
-        const nm = text.match(/(?:my name is|i am|this is)\s+([a-z\s]+)/i);
+        const nm = text.match(/(?:Name:| name as|my name is|i am|this is)\s+([a-z\s]+)/i);
         if (nm) result.name = nm[1].trim();
       }
       if (!result.email) {
@@ -214,15 +219,15 @@ function extractUserDataFromTranscriptObject(payload: any) {
         if (em) result.email = em[0].toLowerCase();
       }
       if (!result.company) {
-        const cm = text.match(/(?:company|organization|business)\s+(?:is|called)\s+([a-z0-9 &]+)/i);
+        const cm = text.match(/(?:Company:|company|organization|business)\s+(?:is|called)\s+([a-z0-9 &]+)/i);
         if (cm) result.company = cm[1].trim();
       }
       if (!result.location) {
-        const lm = text.match(/(?:located|based)\s+(?:in|at)\s+([a-z0-9, ]+)/i);
+        const lm = text.match(/(?:Location:|located|based)\s+(?:in|at)\s+([a-z0-9, ]+)/i);
         if (lm) result.location = lm[1].trim();
       }
       if (!result.industry) {
-        const im = text.match(/(?:industry|sector)\s+(?:is|in)\s+([a-z0-9 &]+)/i);
+        const im = text.match(/(?:Industry:|industry|sector)\s+(?:is|in)\s+([a-z0-9 &]+)/i);
         if (im) result.industry = im[1].trim();
       }
     }
