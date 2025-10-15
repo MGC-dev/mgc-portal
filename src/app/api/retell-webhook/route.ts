@@ -109,7 +109,7 @@ async function createLead(payload: {
     Last_Name: payload.lastName || "Unknown",
     Company: payload.company || "Retell Lead",
     Description: payload.description || "",
-    Lead_Source: "Retell AI",
+    Lead_Source: "AI",
   };
   if (payload.email) leadObj.Email = payload.email;
   if (payload.country) leadObj.Country = payload.country;
@@ -159,13 +159,13 @@ function extractUserDataFromTranscriptObject(payload: any) {
       
       /your name is\s+([a-z\s]+)/i,
       /name is\s+([a-z\s]+)/i,
-      /Name:\s+([a-z\s]+)/i,
+      /name:\s+([a-z\s]+)/i,
       /name as\s+([a-z\s]+)/i,
       /this is\s+([a-z\s]+)/i
     ],
     email: [
       /email[:\-]?\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i,
-      /Email:\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i,
+      /email:\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i,
       /email is\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i,
       /email as\s*([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})/i
     ],
@@ -344,7 +344,7 @@ export async function POST(req: NextRequest) {
     console.log("Lead create response:", JSON.stringify(leadResp));
 
     // Send email only after conversation ends
-    const adminEmail = process.env.NOTIFY_EMAIL || "aksuba7@gmail.com";
+    const adminEmail = "aksuba7@gmail.com";
     const summaryHtml = `
       <h3>Retell Call Summary</h3>
       <p><b>Call ID:</b> ${callId || "N/A"}</p>
