@@ -215,39 +215,42 @@ export async function POST(req: NextRequest) {
       { lastName: userName, company, email: userEmail, description, country: location, callId },
       token
     );
-    console.log("Lead create response:", JSON.stringify(leadResp));
+    try {
+  console.log("Lead create response:", leadResp);
 
-    // Send summary emails
-    const adminEmail = "aksuba7@gmail.com";
-    const summaryHtml = `
-      <h3>Retell Call Summary</h3>
-      <p><b>Call ID:</b> ${callId || "N/A"}</p>
-      <p><b>Name:</b> ${userName}</p>
-      <p><b>Email:</b> ${userEmail || "N/A"}</p>
-      <p><b>Company:</b> ${company || "N/A"}</p>
-      <p><b>Industry:</b> ${industry || "N/A"}</p>
-      <p><b>Location:</b> ${location || "N/A"}</p>
-      <p><b>Agent:</b> ${body.call?.agent_name || "N/A"}</p>
-      <p><b>Duration:</b> ${body.call?.duration_seconds || "N/A"} seconds</p>
-      <hr />
-      <pre>${transcript}</pre>
-    `;
-   // After lead creation
-        try {
-          await sendZohoEmail(adminEmail, `Retell Call ${callId || ""} Summary`, summaryHtml);
-        } catch (err) {
-          console.error("Admin email failed:", err);
-        }
+  const adminEmail = "aksuba7@gmail.com";
+  console.log("Starting email send process...");
 
-        if (userEmail) {
-          try {
-            await sendZohoEmail(userEmail, "Thanks — we received your intake", summaryHtml);
-          } catch (err) {
-            console.error("User email failed:", err);
-          }
-        } else {
-          console.warn("No user email found - cannot send email to user.");
-        }
+  const summaryHtml = `
+    <h3>Retell Call Summary</h3>
+    <p><b>Call ID:</b> ${callId || "N/A"}</p>
+    ...
+  `;
+
+  try {
+    console.log("Sending admin email...");
+    const adminResp = await sendZohoEmail(adminEmail, `Retell Call ${callId || ""} Summary`, summaryHtml);
+    console.log("Admin email sent:", adminResp);
+  } catch (err) {
+    console.error("Admin email failed:", err);
+  }
+
+  if (userEmail) {
+    try {
+      console.log("Sending user email...");
+      const userResp = await sendZohoEmail(userEmail, "Thanks — we received your intake", summaryHtml);
+      console.log("User email sent:", userResp);
+    } catch (err) {
+      console.error("User email failed:", err);
+    }
+  } else {
+    console.warn("No user email found - cannot send email to user.");
+  }
+
+} catch (e) {
+  console.error("Email block crashed:", e);
+}
+
 
     return NextResponse.json({ success: true });
   } catch (err) {
