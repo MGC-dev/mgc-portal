@@ -66,14 +66,14 @@ async function sendZohoEmail(toEmail: string | null, subject: string, message: s
   return safeJson(res);
 }
 
-async function leadExistsByEmail(email: string, token: string) {
-  if (!email) return false;
-  const resp = await fetch(`https://www.zohoapis.com/crm/v2/Leads/search?email=${encodeURIComponent(email)}`, {
-    headers: { Authorization: `Zoho-oauthtoken ${token}` },
-  });
-  const data = await safeJson(resp);
-  return Array.isArray(data.data) && data.data.length > 0;
-}
+// async function leadExistsByEmail(email: string, token: string) {
+//   if (!email) return false;
+//   const resp = await fetch(`https://www.zohoapis.com/crm/v2/Leads/search?email=${encodeURIComponent(email)}`, {
+//     headers: { Authorization: `Zoho-oauthtoken ${token}` },
+//   });
+//   const data = await safeJson(resp);
+//   return Array.isArray(data.data) && data.data.length > 0;
+// }
 
 async function leadExistsByCallId(callId: string, token: string) {
   if (!callId) return false;
