@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import nodemailer from "nodemailer";
 
 let accessToken: string | null = null;
 
 // --- CONFIG ---
 const RETELL_CALL_FIELD_API_NAME = process.env.RETELL_CALL_FIELD_API_NAME || "Retell_Call_ID";
 const ZOHO_FROM_EMAIL = process.env.ZOHO_FROM_EMAIL || "mgcentral@mgconsultingfirm.com";
-const SMTP_EMAIL = process.env.SMTP_EMAIL || "mgcentral@mgconsultingfirm.com";
-const SMTP_PASS = process.env.SMTP_PASS || "rMqEB7tae3pm"; // Use Zoho Mail app password
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "aksuba7@gmail.com";
+const MAX_EMAIL_RETRIES = 3;
+const RETRY_DELAY_MS = 2000;
 
 // --- Helpers ---
 async function refreshZohoToken() {
@@ -44,37 +43,54 @@ async function safeJson(res: Response) {
   }
 }
 
-// --- NEW: Nodemailer Email Function ---
-async function sendEmailViaSMTP(toEmail: string, subject: string, html: string) {
-  if (!toEmail) return { error: "Missing recipient email" };
-
-  try {
-    const transporter = nodemailer.createTransport({
-      host: "smtp.zoho.com",
-      port: 587,
-      secure: false,
-      requireTLS: true,
-      auth: {
-        user: "mgcentral@mgconsultingfirm.com",
-        pass: "rMqEB7tae3pm",
-      },
-    });
-
-    const info = await transporter.sendMail({
-      from: `"MG Consulting" <${SMTP_EMAIL}>`,
-      to: toEmail,
-      subject: "Lead Confirmation",
-      text: "Your lead has been created successfully.",
-    });
-
-    console.log("Email sent successfully:", info.messageId);
-    return { success: true, info };
-  } catch (error) {
-    console.error("SMTP Email send error:", error);
-    return { success: false, error };
+// --- Retry wrapper ---
+async function withRetry<T>(fn: () => Promise<T>, retries = MAX_EMAIL_RETRIES, delayMs = RETRY_DELAY_MS): Promise<T> {
+  let attempt = 0;
+  while (attempt < retries) {
+    try {
+      return await fn();
+    } catch (err) {
+      attempt++;
+      console.warn(`Attempt ${attempt} failed:`, err);
+      if (attempt >= retries) throw err;
+      await new Promise(res => setTimeout(res, delayMs));
+    }
   }
+  throw new Error("Max retries reached");
 }
 
+// --- Zoho Mail API email function ---
+async function sendEmailViaZohoAPI(toEmail: string, subject: string, html: string) {
+  if (!toEmail) return { error: "Missing recipient email" };
+
+  return withRetry(async () => {
+    const token = accessToken || (await refreshZohoToken());
+    if (!token) throw new Error("No Zoho access token");
+
+    const res = await fetch("https://mail.zoho.com/api/accounts/me/messages", {
+      method: "POST",
+      headers: {
+        Authorization: `Zoho-oauthtoken ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        fromAddress: ZOHO_FROM_EMAIL,
+        toAddress: toEmail,
+        subject,
+        content: html,
+        contentType: "html",
+      }),
+    });
+
+    const data = await safeJson(res);
+    if (!res.ok) throw new Error(`Zoho API error: ${JSON.stringify(data)}`);
+
+    console.log("✅ Email sent via Zoho API:", data);
+    return { success: true, data };
+  });
+}
+
+// --- Lead helpers ---
 async function leadExistsByCallId(callId: string, token: string) {
   if (!callId) return false;
   const criteria = `(${RETELL_CALL_FIELD_API_NAME}:equals:${callId})`;
@@ -113,7 +129,6 @@ async function createLead(payload: {
 
 // --- Extract final user data ---
 type TranscriptEntry = { role?: string; content?: string };
-
 function extractFinalDetails(transcriptArray: TranscriptEntry[]) {
   const result: any = { name: null, email: null, company: null, location: null, industry: null };
   if (!Array.isArray(transcriptArray) || transcriptArray.length === 0) return result;
@@ -149,16 +164,12 @@ function extractFinalDetails(transcriptArray: TranscriptEntry[]) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    console.log("Incoming Retell payload:", JSON.stringify(body));
-
     if (!body || Object.keys(body).length === 0)
       return NextResponse.json({ success: true, message: "Empty payload ignored" });
 
     const event = body.event || body.status || null;
-    if (!["call_completed", "call_analyzed"].includes(event)) {
-      console.log(`Event "${event}" ignored.`);
+    if (!["call_completed", "call_analyzed"].includes(event))
       return NextResponse.json({ success: true, message: `Event "${event}" ignored` });
-    }
 
     const callId = body.call_id || body.call?.call_id || body.call?.id;
     const transcriptArray: TranscriptEntry[] =
@@ -180,8 +191,6 @@ export async function POST(req: NextRequest) {
     const location = finalDetails.location || null;
     const industry = finalDetails.industry || null;
 
-    console.log("Final extracted data:", { userName, userEmail, company, location, industry });
-
     const token = accessToken || (await refreshZohoToken());
     if (!token) return NextResponse.json({ error: "No Zoho token" }, { status: 500 });
 
@@ -195,9 +204,7 @@ export async function POST(req: NextRequest) {
       token
     );
 
-    console.log("Lead create response:", leadResp);
-    console.log("Starting email send process...");
-
+    // --- Email Summary ---
     const summaryHtml = `
       <h3>Retell Call Summary</h3>
       <p><b>Call ID:</b> ${callId || "N/A"}</p>
@@ -210,18 +217,16 @@ export async function POST(req: NextRequest) {
       <pre>${transcript}</pre>
     `;
 
-    // Send Admin Email
-    await sendEmailViaSMTP(ADMIN_EMAIL, `Retell Call ${callId || ""} Summary`, summaryHtml);
+    // Send Admin Email with retries
+    await sendEmailViaZohoAPI(ADMIN_EMAIL, `Retell Call ${callId || ""} Summary`, summaryHtml);
 
-    // Send User Email
+    // Send User Email with retries
     if (userEmail) {
-      await sendEmailViaSMTP(
+      await sendEmailViaZohoAPI(
         userEmail,
         "Thanks — we received your intake",
         `<p>Hi ${userName},</p><p>Thank you for sharing your details. Our team will get back to you shortly.</p>`
       );
-    } else {
-      console.warn("No user email found - cannot send user email.");
     }
 
     return NextResponse.json({ success: true });
