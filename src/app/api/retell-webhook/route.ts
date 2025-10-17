@@ -50,8 +50,8 @@ async function sendEmailViaSMTP(toEmail: string, subject: string, html: string) 
 
   try {
     const transporter = nodemailer.createTransport({
-      host: "smtp.zoho.in", // or smtp.zoho.com for global
-      port: 465,
+      host: process.env.SMTP_HOST!,
+      port: Number(process.env.SMTP_PORT!),
       secure: true,
       auth: {
         user: SMTP_EMAIL,
