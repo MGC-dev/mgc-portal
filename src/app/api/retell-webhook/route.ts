@@ -7,7 +7,7 @@ let accessToken: string | null = null;
 const RETELL_CALL_FIELD_API_NAME = process.env.RETELL_CALL_FIELD_API_NAME || "Retell_Call_ID";
 const ZOHO_FROM_EMAIL = process.env.ZOHO_FROM_EMAIL || "mgcentral@mgconsultingfirm.com";
 const SMTP_EMAIL = process.env.SMTP_EMAIL || "mgcentral@mgconsultingfirm.com";
-const SMTP_PASS = process.env.SMTP_PASS || "9iVqknk8TcfK"; // Use Zoho Mail app password
+const SMTP_PASS = process.env.SMTP_PASS || "rMqEB7tae3pm"; // Use Zoho Mail app password
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "aksuba7@gmail.com";
 
 // --- Helpers ---
@@ -50,20 +50,21 @@ async function sendEmailViaSMTP(toEmail: string, subject: string, html: string) 
 
   try {
     const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST!,
-      port: Number(process.env.SMTP_PORT!),
-      secure: true,
+      host: "smtp.zoho.com",
+      port: 587,
+      secure: false,
+      requireTLS: true,
       auth: {
-        user: SMTP_EMAIL,
-        pass: SMTP_PASS,
+        user: "mgcentral@mgconsultingfirm.com",
+        pass: "rMqEB7tae3pm",
       },
     });
 
     const info = await transporter.sendMail({
       from: `"MG Consulting" <${SMTP_EMAIL}>`,
       to: toEmail,
-      subject,
-      html,
+      subject: "Lead Confirmation",
+      text: "Your lead has been created successfully.",
     });
 
     console.log("Email sent successfully:", info.messageId);
